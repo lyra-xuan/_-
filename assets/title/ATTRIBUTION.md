@@ -8,5 +8,5 @@
   The user confirmed that use in this project is licensed. The source project's
   AGPL-3.0 license is included as `PROJECT-STRIKER-LICENSE.txt`.
 
-The game displays the original images directly, scaling/cropping them to fit
-the 480x640 window. No source artwork was redrawn.
+The game displays the original images directly, scaling them to fit the
+1280x960 window. No source artwork was redrawn.

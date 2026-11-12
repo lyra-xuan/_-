@@ -12,7 +12,9 @@ from src.game import Game
 class BossCombatTests(unittest.TestCase):
     def make_game(self) -> Game:
         game = Game.__new__(Game)
-        game.player = Player(config.SCREEN_W / 2, config.SCREEN_H - 80)
+        game.player = Player(
+            config.SCREEN_W / 2, config.SCREEN_H - config.PLAYER_START_MARGIN
+        )
         game.boss = Boss(config.SCREEN_W / 2, config.BOSS_START_Y)
         game.bullets = []
         game.player_shots = []
@@ -45,7 +47,10 @@ class BossCombatTests(unittest.TestCase):
     def test_game_disables_text_input_for_keyboard_controls(self) -> None:
         with (
             patch("pygame.init") as init,
-            patch("pygame.display.set_mode"),
+            patch(
+                "pygame.display.set_mode",
+                return_value=pygame.Surface((config.SCREEN_W, config.SCREEN_H)),
+            ) as set_mode,
             patch("pygame.key.stop_text_input") as stop_text_input,
             patch("pygame.display.set_caption"),
             patch("pygame.time.Clock"),
@@ -59,6 +64,10 @@ class BossCombatTests(unittest.TestCase):
 
         init.assert_called_once_with()
         stop_text_input.assert_called_once_with()
+        set_mode.assert_called_once_with((1280, 960))
+        self.assertEqual(
+            game.screen.get_size(), (config.SCREEN_W, config.SCREEN_H)
+        )
         self.assertEqual(game.scene, Game.SCENE_TITLE)
 
     def test_title_selection_opens_controls_and_returns(self) -> None:
@@ -224,9 +233,10 @@ class BossCombatTests(unittest.TestCase):
         game = self.make_game()
         game.boss.hp = config.PLAYER_SHOT_DAMAGE
         game.bullets = [Bullet(100, 100, 0, 100)]
-        shot = PlayerShot(240, 120)
-        shot.prev_pos = Vector2(240, 155)
-        shot.pos = Vector2(240, 85)
+        boss_x = config.SCREEN_W / 2
+        shot = PlayerShot(boss_x, config.BOSS_START_Y)
+        shot.prev_pos = Vector2(boss_x, config.BOSS_START_Y + 35)
+        shot.pos = Vector2(boss_x, config.BOSS_START_Y - 35)
         game.player_shots = [shot]
 
         game._check_boss_collisions()
@@ -253,7 +263,9 @@ class BossCombatTests(unittest.TestCase):
 
         self.assertEqual(game.boss.hp, game.boss.max_hp)
         self.assertEqual(game.player.pos.x, config.SCREEN_W / 2)
-        self.assertEqual(game.player.pos.y, config.SCREEN_H - 80)
+        self.assertEqual(
+            game.player.pos.y, config.SCREEN_H - config.PLAYER_START_MARGIN
+        )
         self.assertEqual(game.bullets, [])
         self.assertEqual(game.player_shots, [])
         self.assertFalse(game.paused)

@@ -15,6 +15,8 @@
 
 项目目标是一关一 Boss。失败/生命机制、碰撞调试可视化和完整美术仍待制作。标题页复用已获许可的东方红魔乡标题图与 `project-striker` 菜单字图，来源和许可记录见 [素材说明](assets/title/ATTRIBUTION.md)；战斗中的玩家、Boss 和弹幕仍由程序绘制。
 
+游戏采用 1280×960 的 4:3 横屏布局，参考 `project-striker` 的画布尺寸。
+
 ## 环境与运行
 
 建议使用 Python 3.12。Windows PowerShell：

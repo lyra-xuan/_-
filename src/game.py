@@ -38,16 +38,10 @@ class Game:
         pygame.key.stop_text_input()
         pygame.display.set_caption("弹幕射击 - 碰撞检测 Demo")
         self.clock = pygame.time.Clock()
-        self.font = _load_font(18)
-        self.font_big = _load_font(30)
+        self.font = _load_font(27)
+        self.font_big = _load_font(45)
         asset_dir = Path(__file__).resolve().parent.parent / "assets" / "title"
         background = pygame.image.load(str(asset_dir / "touhou-th06-title.jpg"))
-        crop_height = max(1, background.get_height() - 60)
-        crop_width = round(crop_height * config.SCREEN_W / config.SCREEN_H)
-        crop_left = max(0, (background.get_width() - crop_width) // 2)
-        background = background.subsurface(
-            (crop_left, 0, crop_width, crop_height)
-        )
         self.title_background = pygame.transform.smoothscale(
             background, (config.SCREEN_W, config.SCREEN_H)
         )
@@ -57,7 +51,7 @@ class Game:
             tuple(
                 pygame.transform.smoothscale(
                     menu_atlas.subsurface((column * 256, row * 64, 256, 64)),
-                    (220, 55),
+                    (360, 90),
                 )
                 for column in (0, 1)
             )
@@ -71,7 +65,9 @@ class Game:
         self.victory = False
         self.focus = False            # 是否处于低速（focus）状态，由 update 写入
 
-        self.player = Player(config.SCREEN_W / 2, config.SCREEN_H - 80)
+        self.player = Player(
+            config.SCREEN_W / 2, config.SCREEN_H - config.PLAYER_START_MARGIN
+        )
         self.boss = Boss(config.SCREEN_W / 2, config.BOSS_START_Y)
         self.bullets: list[Bullet] = []
         self.player_shots: list[PlayerShot] = []
@@ -236,7 +232,9 @@ class Game:
 
     def _reset_run(self) -> None:
         """重置玩家、Boss、弹幕、计时器与本局统计。"""
-        self.player = Player(config.SCREEN_W / 2, config.SCREEN_H - 80)
+        self.player = Player(
+            config.SCREEN_W / 2, config.SCREEN_H - config.PLAYER_START_MARGIN
+        )
         self.boss = Boss(config.SCREEN_W / 2, config.BOSS_START_Y)
         self.bullets.clear()
         self.player_shots.clear()
@@ -300,7 +298,9 @@ class Game:
         self.hit_total += 1
         self.hit_flash = 0.25
         # 骨架阶段：被击中不结束，重置位置并清空擦弹连击
-        self.player.pos = Vector2(config.SCREEN_W / 2, config.SCREEN_H - 80)
+        self.player.pos = Vector2(
+            config.SCREEN_W / 2, config.SCREEN_H - config.PLAYER_START_MARGIN
+        )
         self.player.prev_pos = Vector2(self.player.pos)
         self.player.graze_count = 0
 
@@ -375,18 +375,33 @@ class Game:
 
     def _draw_title_screen(self) -> None:
         self.screen.blit(self.title_background, (0, 0))
-        self._draw_text_centered("星河弹幕", 68, config.BLACK, self.font_big)
-        self._draw_text_centered("单关弹幕射击 · 碰撞检测实践", 105, config.BLACK, self.font)
+        self.screen.blit(
+            self.font_big.render("星河弹幕", True, config.BLACK),
+            (88, 115),
+        )
+        self.screen.blit(
+            self.font.render("单关弹幕射击 · 碰撞检测实践", True, config.BLACK),
+            (96, 180),
+        )
+        self.screen.blit(
+            self.font.render("方向键选择    Enter 确认", True, config.BLACK),
+            (800, 425),
+        )
 
         for index, (selected_image, idle_image) in enumerate(self.title_menu_images):
             image = selected_image if index == self.menu_selection else idle_image
-            self.screen.blit(image, (232, 420 + index * 58))
-
-        self._draw_text_centered("方向键选择    Enter 确认", 616, config.WHITE, self.font)
+            self.screen.blit(image, (800, 500 + index * 112))
 
     def _draw_controls_screen(self) -> None:
         self.screen.blit(self.title_background, (0, 0))
-        self._draw_text_centered("操作说明", 98, config.BLACK, self.font_big)
+        self.screen.blit(
+            self.font_big.render("操作说明", True, config.BLACK),
+            (110, 118),
+        )
+        self.screen.blit(
+            self.font.render("Enter / Esc 返回标题页", True, config.BLACK),
+            (820, 150),
+        )
 
         rows = (
             ("方向键 / WASD", "移动"),
@@ -397,13 +412,12 @@ class Game:
             ("Esc", "战斗时退出游戏"),
         )
         for index, (key, action) in enumerate(rows):
-            y = 354 + index * 38
-            self.screen.blit(self.font.render(key, True, config.WHITE), (32, y))
+            y = 330 + index * 72
+            self.screen.blit(self.font.render(key, True, config.BLACK), (110, y))
             self.screen.blit(
                 self.font.render(action, True, config.WHITE),
-                (242, y),
+                (900, y),
             )
-        self._draw_text_centered("Enter / Esc 返回标题页", 616, config.WHITE, self.font)
 
     def _draw_text_centered(
             self, text: str, y: int, color, font: pygame.font.Font) -> None:
@@ -412,7 +426,7 @@ class Game:
         self.screen.blit(surface, rect)
 
     def _draw_hud(self) -> None:
-        bar = pygame.Rect(8, 8, config.SCREEN_W - 16, 12)
+        bar = pygame.Rect(32, 24, 560, 20)
         pygame.draw.rect(self.screen, config.GRAY, bar)
         health_ratio = max(0.0, self.boss.hp / self.boss.max_hp)
         fill = bar.inflate(-4, -4)
@@ -425,13 +439,21 @@ class Game:
         lines = [
             f"Boss 阶段 {self.boss.phase}  擦弹 {self.graze_total}  命中 {self.hit_total}",
             f"敌弹数量 {len(self.bullets)}",
-            "方向键/WASD 移动  Shift 低速  Z 点射/按住连发  F1 暂停",
         ]
-        y = 26
+        y = 58
         for line in lines:
             surf = self.font.render(line, True, config.WHITE)
-            self.screen.blit(surf, (8, y))
-            y += 22
+            self.screen.blit(surf, (32, y))
+            y += 34
+        hints = (
+            "移动：方向键 / WASD    低速：Shift",
+            "射击：Z    暂停：F1",
+        )
+        for index, hint in enumerate(hints):
+            self.screen.blit(
+                self.font.render(hint, True, config.WHITE),
+                (680, 58 + index * 34),
+            )
 
     def _draw_center_text(self, text: str, color) -> None:
         surf = self.font_big.render(text, True, color)
