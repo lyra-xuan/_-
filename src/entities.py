@@ -1,4 +1,4 @@
-"""游戏实体：玩家与子弹。
+"""游戏实体：玩家、Boss 与子弹。
 
 所有实体继承 ``Entity``，统一 ``update(dt)`` / ``draw(surface)`` 接口。
 与碰撞相关的两个半径定义在实体上（``radius`` 命中半径、
@@ -100,3 +100,65 @@ class Bullet(Entity):
         r = int(self.radius)
         pygame.draw.circle(surface, self.color, center, r)
         pygame.draw.circle(surface, config.WHITE, center, max(1, r // 2))
+
+
+class PlayerShot(Entity):
+    """玩家射出的直线弹，保留上一帧位置供连续碰撞检测。"""
+
+    def __init__(self, x: float, y: float) -> None:
+        super().__init__(x, y)
+        self.vel = Vector2(0.0, -config.PLAYER_SHOT_SPEED)
+        self.radius = config.PLAYER_SHOT_RADIUS
+        self.damage = config.PLAYER_SHOT_DAMAGE
+        self.prev_pos = Vector2(self.pos)
+
+    def update(self, dt: float) -> None:
+        self.prev_pos = Vector2(self.pos)
+        super().update(dt)
+        if self.pos.y < -self.radius:
+            self.alive = False
+
+    def draw(self, surface: pygame.Surface) -> None:
+        width = max(2, int(self.radius * 2))
+        height = max(4, int(self.radius * 4))
+        rect = pygame.Rect(0, 0, width, height)
+        rect.center = (round(self.pos.x), round(self.pos.y))
+        pygame.draw.ellipse(surface, config.CYAN, rect)
+
+
+class Boss(Entity):
+    """单关 Boss：水平往返移动，以剩余生命值切换攻击阶段。"""
+
+    def __init__(self, x: float, y: float) -> None:
+        super().__init__(x, y)
+        self.prev_pos = Vector2(self.pos)
+        self.radius = config.BOSS_RADIUS
+        self.max_hp = config.BOSS_MAX_HP
+        self.hp = self.max_hp
+        self.direction = 1
+
+    @property
+    def phase(self) -> int:
+        return 2 if self.hp <= self.max_hp / 2 else 1
+
+    def take_damage(self, amount: float) -> None:
+        self.hp = max(0.0, self.hp - max(0.0, amount))
+        self.alive = self.hp > 0.0
+
+    def update(self, dt: float) -> None:
+        self.prev_pos = Vector2(self.pos)
+        self.pos.x += self.direction * config.BOSS_MOVE_SPEED * dt
+
+        if self.pos.x <= config.BOSS_LEFT_BOUND:
+            self.pos.x = config.BOSS_LEFT_BOUND
+            self.direction = 1
+        elif self.pos.x >= config.BOSS_RIGHT_BOUND:
+            self.pos.x = config.BOSS_RIGHT_BOUND
+            self.direction = -1
+
+    def draw(self, surface: pygame.Surface) -> None:
+        center = (round(self.pos.x), round(self.pos.y))
+        radius = int(self.radius)
+        pygame.draw.circle(surface, config.RED, center, radius)
+        pygame.draw.circle(surface, config.YELLOW, center, radius, 3)
+        pygame.draw.circle(surface, config.WHITE, center, max(3, radius // 3))
