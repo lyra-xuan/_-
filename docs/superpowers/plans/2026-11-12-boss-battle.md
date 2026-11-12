@@ -65,11 +65,17 @@
 
 **Before checklist**
 
-- [ ] Draw the boss, player shots, boss HP bar, and current phase.
-- [ ] Stop combat updates after victory and show a restart prompt.
-- [ ] Restart restores player, boss HP, timers, counters, and all projectile lists.
-- [ ] Update README controls and requirements status.
-- [ ] Run `python -m unittest discover -s tests -v` and `python -m compileall -q src tests main.py`.
-- [ ] Inspect the final diff, commit the completed feature, and report whether remote push is pending.
+- [x] Draw the boss, player shots, boss HP bar, and current phase.
+- [x] Stop combat updates after victory and show a restart prompt.
+- [x] Restart restores player, boss HP, timers, counters, and all projectile lists.
+- [x] Update README controls and requirements status.
+- [x] Run `python -m unittest discover -s tests -v` and `python -m compileall -q src tests main.py`.
+- [x] Inspect the final diff and prepare the feature commit.
 
 **Acceptance:** Player can hold Z to defeat the boss; the boss visibly changes attack at half HP; the victory screen can restart a fresh run; all tests pass.
+
+**Completion checklist**
+
+- [x] Implemented the one-Boss encounter with program-drawn combat feedback and victory/restart.
+- [x] All 14 tests, compile check, and SDL dummy render smoke test pass.
+- [x] README and requirement statuses reflect the implementation; no external assets were added.

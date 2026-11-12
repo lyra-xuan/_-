@@ -36,6 +36,7 @@ class Game:
 
         self.running = True
         self.paused = False
+        self.victory = False
         self.focus = False            # 是否处于低速（focus）状态，由 update 写入
 
         self.player = Player(config.SCREEN_W / 2, config.SCREEN_H - 80)
@@ -63,6 +64,8 @@ class Game:
             elif event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_ESCAPE:
                     self.running = False
+                elif event.key == pygame.K_r and self.victory:
+                    self._reset_run()
                 elif event.key in (pygame.K_p, pygame.K_SPACE):
                     self.paused = not self.paused
 
@@ -166,6 +169,28 @@ class Game:
                         break
 
         self.player_shots = [shot for shot in self.player_shots if shot.alive]
+        if not self.boss.alive:
+            self.victory = True
+            self.bullets.clear()
+            self.player_shots.clear()
+
+    def _reset_run(self) -> None:
+        """重置玩家、Boss、弹幕、计时器与本局统计。"""
+        self.player = Player(config.SCREEN_W / 2, config.SCREEN_H - 80)
+        self.boss = Boss(config.SCREEN_W / 2, config.BOSS_START_Y)
+        self.bullets.clear()
+        self.player_shots.clear()
+        self.grid.clear()
+        self.shooting = False
+        self.fire_timer = 0.0
+        self.boss_attack_timer = config.BOSS_PHASE1_INTERVAL
+        self.boss_attack_phase = self.boss.phase
+        self.graze_total = 0
+        self.hit_total = 0
+        self.hit_flash = 0.0
+        self.focus = False
+        self.paused = False
+        self.victory = False
 
     def _check_collisions(self) -> None:
         """双层判定：擦弹区（外层，不致命）/ 命中区（内层，致命）。
@@ -219,7 +244,7 @@ class Game:
         self.player.graze_count = 0
 
     def update(self, dt: float) -> None:
-        if self.paused:
+        if self.paused or self.victory:
             return
 
         self.focus, self.shooting = self._read_player_input()
@@ -229,11 +254,14 @@ class Game:
         self.player.pos.x = max(0, min(config.SCREEN_W, self.player.pos.x))
         self.player.pos.y = max(0, min(config.SCREEN_H, self.player.pos.y))
 
-        self.boss.update(dt)
+        if self.boss.alive:
+            self.boss.update(dt)
         self._spawn_player_shots(dt)
         for shot in self.player_shots:
             shot.update(dt)
         self._check_boss_collisions()
+        if self.victory:
+            return
 
         self._update_boss_attacks(dt)
         for b in self.bullets:
@@ -251,6 +279,10 @@ class Game:
     def _render(self) -> None:
         self.screen.fill(config.BLACK)
 
+        self.boss.draw(self.screen)
+        for shot in self.player_shots:
+            if shot.alive:
+                shot.draw(self.screen)
         self.player.draw(self.screen, focus=self.focus)
         for b in self.bullets:
             b.draw(self.screen)
@@ -266,15 +298,26 @@ class Game:
 
         if self.paused:
             self._draw_center_text("已暂停  (P / 空格 继续)", config.YELLOW)
+        elif self.victory:
+            self._draw_center_text("Boss 击破！按 R 重新开始", config.YELLOW)
 
     def _draw_hud(self) -> None:
+        bar = pygame.Rect(8, 8, config.SCREEN_W - 16, 12)
+        pygame.draw.rect(self.screen, config.GRAY, bar)
+        health_ratio = max(0.0, self.boss.hp / self.boss.max_hp)
+        fill = bar.inflate(-4, -4)
+        fill.width = round(fill.width * health_ratio)
+        if fill.width > 0 and fill.height > 0:
+            color = config.CYAN if self.boss.phase == 1 else config.RED
+            pygame.draw.rect(self.screen, color, fill)
+        pygame.draw.rect(self.screen, config.WHITE, bar, 1)
+
         lines = [
-            f"擦弹 Graze : {self.graze_total}",
-            f"被命中 Hit : {self.hit_total}",
-            f"子弹数     : {len(self.bullets)}",
-            "方向键/WASD 移动  Shift 低速  P 暂停",
+            f"Boss 阶段 {self.boss.phase}  擦弹 {self.graze_total}  命中 {self.hit_total}",
+            f"敌弹数量 {len(self.bullets)}",
+            "方向键/WASD 移动  Shift 低速  Z 射击  P 暂停",
         ]
-        y = 8
+        y = 26
         for line in lines:
             surf = self.font.render(line, True, config.WHITE)
             self.screen.blit(surf, (8, y))

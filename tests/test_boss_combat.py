@@ -2,8 +2,8 @@ import unittest
 
 from pygame.math import Vector2
 
-from src import config
-from src.entities import Boss, Player, PlayerShot
+from src import collision, config
+from src.entities import Boss, Bullet, Player, PlayerShot
 from src.game import Game
 
 
@@ -18,6 +18,13 @@ class BossCombatTests(unittest.TestCase):
         game.fire_timer = 0.0
         game.boss_attack_timer = config.BOSS_PHASE1_INTERVAL
         game.boss_attack_phase = game.boss.phase
+        game.grid = collision.SpatialGrid(
+            config.SCREEN_W, config.SCREEN_H, config.GRID_CELL_SIZE
+        )
+        game.paused = False
+        game.graze_total = 0
+        game.hit_total = 0
+        game.hit_flash = 0.0
         game.victory = False
         return game
 
@@ -85,6 +92,50 @@ class BossCombatTests(unittest.TestCase):
         game._check_boss_collisions()
 
         self.assertEqual(game.player_shots, [])
+
+    def test_final_hit_enters_victory_and_clears_projectiles(self) -> None:
+        game = self.make_game()
+        game.boss.hp = config.PLAYER_SHOT_DAMAGE
+        game.bullets = [Bullet(100, 100, 0, 100)]
+        shot = PlayerShot(240, 120)
+        shot.prev_pos = Vector2(240, 155)
+        shot.pos = Vector2(240, 85)
+        game.player_shots = [shot]
+
+        game._check_boss_collisions()
+
+        self.assertTrue(game.victory)
+        self.assertFalse(game.boss.alive)
+        self.assertEqual(game.bullets, [])
+        self.assertEqual(game.player_shots, [])
+
+    def test_reset_run_restores_clean_boss_encounter(self) -> None:
+        game = self.make_game()
+        game.boss.take_damage(game.boss.max_hp)
+        game.bullets.append(Bullet(100, 100, 0, 100))
+        game.player_shots.append(PlayerShot(100, 100))
+        game.paused = True
+        game.victory = True
+        game.graze_total = 4
+        game.hit_total = 2
+        game.hit_flash = 0.2
+        game.fire_timer = 0.1
+        game.boss_attack_timer = 0.1
+
+        game._reset_run()
+
+        self.assertEqual(game.boss.hp, game.boss.max_hp)
+        self.assertEqual(game.player.pos.x, config.SCREEN_W / 2)
+        self.assertEqual(game.player.pos.y, config.SCREEN_H - 80)
+        self.assertEqual(game.bullets, [])
+        self.assertEqual(game.player_shots, [])
+        self.assertFalse(game.paused)
+        self.assertFalse(game.victory)
+        self.assertEqual(game.graze_total, 0)
+        self.assertEqual(game.hit_total, 0)
+        self.assertEqual(game.hit_flash, 0.0)
+        self.assertEqual(game.fire_timer, 0.0)
+        self.assertEqual(game.boss_attack_timer, config.BOSS_PHASE1_INTERVAL)
 
 
 if __name__ == "__main__":
