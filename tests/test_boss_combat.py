@@ -12,10 +12,8 @@ from src.game import Game
 class BossCombatTests(unittest.TestCase):
     def make_game(self) -> Game:
         game = Game.__new__(Game)
-        game.player = Player(
-            config.SCREEN_W / 2, config.SCREEN_H - config.PLAYER_START_MARGIN
-        )
-        game.boss = Boss(config.SCREEN_W / 2, config.BOSS_START_Y)
+        game.player = Player(config.PLAYER_START_X, config.PLAYER_START_Y)
+        game.boss = Boss(config.BOSS_START_X, config.BOSS_START_Y)
         game.bullets = []
         game.player_shots = []
         game.shooting = False
@@ -32,6 +30,7 @@ class BossCombatTests(unittest.TestCase):
         game.graze_total = 0
         game.hit_total = 0
         game.hit_flash = 0.0
+        game.animation_timer = 0.0
         game.lives = config.PLAYER_LIVES
         game.invulnerable_timer = 0.0
         game.victory = False
@@ -113,6 +112,22 @@ class BossCombatTests(unittest.TestCase):
         self.assertEqual(game.boss.pos, boss_position)
         self.assertEqual(game.boss_attack_timer, attack_timer)
         self.assertEqual(game.bullets, [])
+
+    def test_player_is_clamped_to_the_bullet_playfield(self) -> None:
+        game = self.make_game()
+        game.player.pos.update(
+            config.PLAYFIELD_LEFT - 20, config.PLAYFIELD_BOTTOM + 20
+        )
+
+        with patch.object(game, "_read_player_input", return_value=(False, False)):
+            game.update(0.0)
+
+        self.assertEqual(
+            game.player.pos.x, config.PLAYFIELD_LEFT + game.player.radius
+        )
+        self.assertEqual(
+            game.player.pos.y, config.PLAYFIELD_BOTTOM - game.player.radius
+        )
 
 
     def test_f1_toggles_pause_and_space_does_not(self) -> None:
@@ -236,7 +251,7 @@ class BossCombatTests(unittest.TestCase):
         game = self.make_game()
         game.boss.hp = config.PLAYER_SHOT_DAMAGE
         game.bullets = [Bullet(100, 100, 0, 100)]
-        boss_x = config.SCREEN_W / 2
+        boss_x = config.BOSS_START_X
         shot = PlayerShot(boss_x, config.BOSS_START_Y)
         shot.prev_pos = Vector2(boss_x, config.BOSS_START_Y + 35)
         shot.pos = Vector2(boss_x, config.BOSS_START_Y - 35)
@@ -265,7 +280,7 @@ class BossCombatTests(unittest.TestCase):
         self.assertEqual(game.bullets, [])
         self.assertEqual(
             game.player.pos,
-            Vector2(config.SCREEN_W / 2, config.SCREEN_H - config.PLAYER_START_MARGIN),
+            Vector2(config.PLAYER_START_X, config.PLAYER_START_Y),
         )
         self.assertEqual(game.player.prev_pos, game.player.pos)
         self.assertEqual(game.player.graze_count, 0)
@@ -371,10 +386,8 @@ class BossCombatTests(unittest.TestCase):
         game._reset_run()
 
         self.assertEqual(game.boss.hp, game.boss.max_hp)
-        self.assertEqual(game.player.pos.x, config.SCREEN_W / 2)
-        self.assertEqual(
-            game.player.pos.y, config.SCREEN_H - config.PLAYER_START_MARGIN
-        )
+        self.assertEqual(game.player.pos.x, config.PLAYER_START_X)
+        self.assertEqual(game.player.pos.y, config.PLAYER_START_Y)
         self.assertEqual(game.bullets, [])
         self.assertEqual(game.player_shots, [])
         self.assertFalse(game.paused)

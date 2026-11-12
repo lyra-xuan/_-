@@ -15,7 +15,7 @@ class BossEntityTests(unittest.TestCase):
         self.assertEqual(boss.direction, -1)
 
     def test_boss_changes_phase_at_half_health_and_health_is_clamped(self) -> None:
-        boss = Boss(config.SCREEN_W / 2, config.BOSS_START_Y)
+        boss = Boss(config.BOSS_START_X, config.BOSS_START_Y)
 
         boss.take_damage(boss.max_hp / 2)
         self.assertEqual(boss.phase, 2)

@@ -12,12 +12,14 @@
 - Boss 血条、玩家生命、命中/擦弹计数，以及胜利和失败流程。
 - 玩家有 3 条命；受击后重生、清空当前敌弹并获得 1.5 秒无敌时间。
 - 失败后可按 R 重开，或按 Enter / Esc 返回标题页。
+- 1280×960 横屏战斗布局：左侧弹幕场、右侧 Boss 与战斗信息栏。
+- 使用已获许可的东方红魔乡背景、自机、Boss 立绘和弹幕图片素材。
 - AABB、圆-圆、线段-圆扫掠检测和均匀空间网格工具。
 - 玩家/敌弹和玩家弹/Boss 的相对运动连续碰撞检测。
 
-项目目标是一关一 Boss。分数系统、碰撞调试可视化和完整美术仍待制作。标题页复用已获许可的东方红魔乡标题图与 `project-striker` 菜单字图，来源和许可记录见 `assets/title/ATTRIBUTION.md`；战斗中的玩家、Boss 和弹幕仍由程序绘制。
+项目目标是一关一 Boss。分数系统和碰撞调试可视化仍待制作。标题页复用东方红魔乡标题图与 `project-striker` 菜单字图；战斗画面使用用户提供并确认许可的东方红魔乡素材。素材来源和许可说明分别见 `assets/title/ATTRIBUTION.md` 与 `assets/gameplay/ATTRIBUTION.md`。
 
-游戏采用 1280×960 的 4:3 横屏布局，参考 `project-striker` 的画布尺寸。
+游戏采用 1280×960 的 4:3 横屏布局，参考 `project-striker` 的画布尺寸与左侧弹幕场、右侧状态栏的布局。
 
 ## 环境与运行
 
@@ -56,7 +58,9 @@ main.py                 程序入口
 src/config.py           窗口和玩法参数
 src/entities.py         玩家、子弹等实体
 src/collision.py        几何碰撞与空间网格
+src/art.py              战斗背景、角色和弹幕图片加载
 src/game.py             输入、游戏循环、碰撞和渲染
+assets/gameplay/        战斗背景、自机、Boss 与弹幕素材
 tests/                  回归测试
 docs/requirements.md    功能范围和验收标准
 docs/production-guide.md 开发阶段与协作监督方式

@@ -62,7 +62,13 @@ class Player(Entity):
         self.prev_pos = Vector2(self.pos)
         super().update(dt)
 
-    def draw(self, surface: pygame.Surface, focus: bool = False) -> None:
+    def draw(
+            self, surface: pygame.Surface, focus: bool = False,
+            sprite: pygame.Surface | None = None) -> None:
+        if sprite is not None:
+            surface.blit(sprite, sprite.get_rect(center=self.pos))
+            return
+
         # 外层擦弹区（半透明），低速移动时更醒目
         draw_translucent_circle(
             surface, config.BLUE, (self.pos.x, self.pos.y),
@@ -91,11 +97,21 @@ class Bullet(Entity):
         self.prev_pos = Vector2(self.pos)
         super().update(dt)
         margin = 60
-        if (self.pos.x < -margin or self.pos.x > config.SCREEN_W + margin or
-                self.pos.y < -margin or self.pos.y > config.SCREEN_H + margin):
+        if (
+            self.pos.x < config.PLAYFIELD_LEFT - margin
+            or self.pos.x > config.PLAYFIELD_RIGHT + margin
+            or self.pos.y < config.PLAYFIELD_TOP - margin
+            or self.pos.y > config.PLAYFIELD_BOTTOM + margin
+        ):
             self.alive = False  # 出屏回收
 
-    def draw(self, surface: pygame.Surface) -> None:
+    def draw(
+            self, surface: pygame.Surface,
+            sprite: pygame.Surface | None = None) -> None:
+        if sprite is not None:
+            surface.blit(sprite, sprite.get_rect(center=self.pos))
+            return
+
         center = (int(self.pos.x), int(self.pos.y))
         r = int(self.radius)
         pygame.draw.circle(surface, self.color, center, r)
@@ -115,10 +131,16 @@ class PlayerShot(Entity):
     def update(self, dt: float) -> None:
         self.prev_pos = Vector2(self.pos)
         super().update(dt)
-        if self.pos.y < -self.radius:
+        if self.pos.y < config.PLAYFIELD_TOP - self.radius:
             self.alive = False
 
-    def draw(self, surface: pygame.Surface) -> None:
+    def draw(
+            self, surface: pygame.Surface,
+            sprite: pygame.Surface | None = None) -> None:
+        if sprite is not None:
+            surface.blit(sprite, sprite.get_rect(center=self.pos))
+            return
+
         width = max(2, int(self.radius * 2))
         height = max(4, int(self.radius * 4))
         rect = pygame.Rect(0, 0, width, height)
@@ -156,7 +178,13 @@ class Boss(Entity):
             self.pos.x = config.BOSS_RIGHT_BOUND
             self.direction = -1
 
-    def draw(self, surface: pygame.Surface) -> None:
+    def draw(
+            self, surface: pygame.Surface,
+            sprite: pygame.Surface | None = None) -> None:
+        if sprite is not None:
+            surface.blit(sprite, sprite.get_rect(center=self.pos))
+            return
+
         center = (round(self.pos.x), round(self.pos.y))
         radius = int(self.radius)
         pygame.draw.circle(surface, config.RED, center, radius)
