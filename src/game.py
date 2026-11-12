@@ -48,6 +48,7 @@ class Game:
         self.shooting = False
         self.fire_timer = 0.0
         self.boss_attack_timer = config.BOSS_PHASE1_INTERVAL
+        self.boss_attack_phase = self.boss.phase
         self.graze_total = 0
         self.hit_total = 0
         self.hit_flash = 0.0          # 命中时的红屏闪烁计时
@@ -131,34 +132,38 @@ class Game:
     def _update_boss_attacks(self, dt: float) -> None:
         if not self.boss.alive:
             return
+
+        phase = self.boss.phase
+        interval = (config.BOSS_PHASE1_INTERVAL if phase == 1
+                    else config.BOSS_PHASE2_INTERVAL)
+        if phase != self.boss_attack_phase:
+            self.boss_attack_phase = phase
+            self.boss_attack_timer = interval
+
         self.boss_attack_timer -= dt
         if self.boss_attack_timer > 0.0:
             return
 
         self._spawn_boss_attack()
-        interval = (config.BOSS_PHASE1_INTERVAL if self.boss.phase == 1
-                    else config.BOSS_PHASE2_INTERVAL)
         self.boss_attack_timer = interval
 
     def _check_boss_collisions(self) -> None:
         """用相对运动线段检测玩家弹与移动 Boss 的碰撞。"""
-        if not self.boss.alive:
-            return
-
-        for shot in self.player_shots:
-            if not shot.alive:
-                continue
-            x1 = shot.prev_pos.x - self.boss.prev_pos.x
-            y1 = shot.prev_pos.y - self.boss.prev_pos.y
-            x2 = shot.pos.x - self.boss.pos.x
-            y2 = shot.pos.y - self.boss.pos.y
-            if collision.segment_circle(
-                    x1, y1, x2, y2, 0.0, 0.0,
-                    shot.radius + self.boss.radius):
-                shot.alive = False
-                self.boss.take_damage(shot.damage)
-                if not self.boss.alive:
-                    break
+        if self.boss.alive:
+            for shot in self.player_shots:
+                if not shot.alive:
+                    continue
+                x1 = shot.prev_pos.x - self.boss.prev_pos.x
+                y1 = shot.prev_pos.y - self.boss.prev_pos.y
+                x2 = shot.pos.x - self.boss.pos.x
+                y2 = shot.pos.y - self.boss.pos.y
+                if collision.segment_circle(
+                        x1, y1, x2, y2, 0.0, 0.0,
+                        shot.radius + self.boss.radius):
+                    shot.alive = False
+                    self.boss.take_damage(shot.damage)
+                    if not self.boss.alive:
+                        break
 
         self.player_shots = [shot for shot in self.player_shots if shot.alive]
 

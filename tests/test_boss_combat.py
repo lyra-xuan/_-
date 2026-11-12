@@ -16,6 +16,8 @@ class BossCombatTests(unittest.TestCase):
         game.player_shots = []
         game.shooting = False
         game.fire_timer = 0.0
+        game.boss_attack_timer = config.BOSS_PHASE1_INTERVAL
+        game.boss_attack_phase = game.boss.phase
         game.victory = False
         return game
 
@@ -62,6 +64,27 @@ class BossCombatTests(unittest.TestCase):
 
         aimed = min(game.bullets, key=lambda bullet: abs(bullet.vel.x))
         self.assertGreater(aimed.vel.y, 0)
+
+    def test_phase_change_uses_phase_two_attack_interval(self) -> None:
+        game = self.make_game()
+        game.boss.take_damage(game.boss.max_hp / 2)
+
+        game._update_boss_attacks(config.BOSS_PHASE2_INTERVAL - 0.01)
+        self.assertEqual(game.bullets, [])
+
+        game._update_boss_attacks(0.02)
+        self.assertEqual(len(game.bullets), config.BOSS_RING_COUNT)
+
+    def test_dead_player_shots_are_removed_after_boss_is_defeated(self) -> None:
+        game = self.make_game()
+        game.boss.alive = False
+        shot = PlayerShot(100, 0)
+        shot.alive = False
+        game.player_shots = [shot]
+
+        game._check_boss_collisions()
+
+        self.assertEqual(game.player_shots, [])
 
 
 if __name__ == "__main__":

@@ -56,9 +56,10 @@
 
 **Completion checklist**
 
-- [x] Added a firing-interval test and relative-motion Boss-hit test.
-- [x] All 10 tests and the compile check pass.
-- [x] Independent review will follow the commit because this step adds collision behavior.
+- [x] Added firing-interval, relative-motion hit, phase-timing, and defeated-Boss cleanup tests.
+- [x] All 12 tests pass.
+- [x] Independent review found and the implementation fixed phase-timer and projectile-cleanup issues.
+- [ ] Boss/player-shot drawing and victory feedback remain in Task 3.
 
 ## Task 3: Feedback and Regression
 
