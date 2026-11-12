@@ -21,10 +21,10 @@
 
 **Before checklist**
 
-- [ ] Keep the existing `Entity.update(dt)` contract.
-- [ ] Add boss bounds, horizontal speed, radius, and maximum HP to config.
-- [ ] Add player-shot speed, radius, and damage to config.
-- [ ] Test boss bounce, half-HP phase transition, and upward/offscreen player-shot behavior.
+- [x] Keep the existing `Entity.update(dt)` contract.
+- [x] Add boss bounds, horizontal speed, radius, and maximum HP to config.
+- [x] Add player-shot speed, radius, and damage to config.
+- [x] Test boss bounce, half-HP phase transition, and upward/offscreen player-shot behavior.
 
 **Implementation contract**
 
@@ -35,18 +35,30 @@
 
 **Verify:** `python -m unittest tests.test_boss_entities -v`
 
+**Completion checklist**
+
+- [x] Added `Boss` and `PlayerShot` with program-drawn visuals.
+- [x] All four entity tests and both existing collision tests pass.
+- [x] Committed as `81beed7`.
+
 ## Task 2: Combat Integration
 
 **Before checklist**
 
-- [ ] Add a held-Z firing timer and player-shot collection to `Game`.
-- [ ] Replace random top-edge spawning with attacks emitted from the boss.
-- [ ] Phase 1 fires a five-shot aimed fan every 0.85 seconds.
-- [ ] Phase 2 fires an eight-direction ring every 0.60 seconds.
-- [ ] Resolve player shots against the boss using relative-motion `segment_circle`.
-- [ ] Preserve existing player/enemy-bullet hit and graze behavior.
+- [x] Add a held-Z firing timer and player-shot collection to `Game`.
+- [x] Replace random top-edge spawning with attacks emitted from the boss.
+- [x] Phase 1 fires a five-shot aimed fan every 0.85 seconds.
+- [x] Phase 2 fires an eight-direction ring every 0.60 seconds.
+- [x] Resolve player shots against the boss using relative-motion `segment_circle`.
+- [x] Preserve existing player/enemy-bullet hit and graze behavior.
 
 **Verify:** `python -m unittest tests.test_boss_combat -v`
+
+**Completion checklist**
+
+- [x] Added a firing-interval test and relative-motion Boss-hit test.
+- [x] All 10 tests and the compile check pass.
+- [x] Independent review will follow the commit because this step adds collision behavior.
 
 ## Task 3: Feedback and Regression
 

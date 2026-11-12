@@ -6,13 +6,12 @@
 from __future__ import annotations
 
 import math
-import random
 
 import pygame
 from pygame.math import Vector2
 
 from . import config, collision
-from .entities import Bullet, Player, draw_translucent_circle
+from .entities import Boss, Bullet, Player, PlayerShot, draw_translucent_circle
 
 
 def _load_font(size: int) -> pygame.font.Font:
@@ -40,14 +39,18 @@ class Game:
         self.focus = False            # 是否处于低速（focus）状态，由 update 写入
 
         self.player = Player(config.SCREEN_W / 2, config.SCREEN_H - 80)
+        self.boss = Boss(config.SCREEN_W / 2, config.BOSS_START_Y)
         self.bullets: list[Bullet] = []
+        self.player_shots: list[PlayerShot] = []
         # 空间网格复用同一个实例，每帧 clear 后重新插入，避免反复新建
         self.grid = collision.SpatialGrid(config.SCREEN_W, config.SCREEN_H,
                                           config.GRID_CELL_SIZE)
+        self.shooting = False
+        self.fire_timer = 0.0
+        self.boss_attack_timer = config.BOSS_PHASE1_INTERVAL
         self.graze_total = 0
         self.hit_total = 0
         self.hit_flash = 0.0          # 命中时的红屏闪烁计时
-        self.spawn_timer = 0.0
 
     # ------------------------------------------------------------------ #
     # 输入
@@ -62,8 +65,8 @@ class Game:
                 elif event.key in (pygame.K_p, pygame.K_SPACE):
                     self.paused = not self.paused
 
-    def _read_player_input(self) -> bool:
-        """读取方向键设置玩家速度，返回是否处于低速（focus）状态。"""
+    def _read_player_input(self) -> tuple[bool, bool]:
+        """读取玩家移动、低速和射击输入。"""
         keys = pygame.key.get_pressed()
         move = Vector2(0.0, 0.0)
         if keys[pygame.K_LEFT] or keys[pygame.K_a]:
@@ -80,28 +83,84 @@ class Game:
             move = move.normalize()
         speed = config.PLAYER_SPEED * (config.PLAYER_FOCUS_FACTOR if focus else 1.0)
         self.player.vel = move * speed
-        return focus
+        return focus, keys[pygame.K_z]
 
     # ------------------------------------------------------------------ #
     # 逻辑更新
     # ------------------------------------------------------------------ #
-    def _spawn_bullets(self, dt: float) -> None:
-        """按定时器生成子弹，采用环形弹幕以充分触发碰撞/擦弹判定。"""
-        self.spawn_timer -= dt
-        if self.spawn_timer > 0:
-            return
-        self.spawn_timer = 0.35
+    def _spawn_player_shots(self, dt: float) -> None:
+        """按住射击键时按固定间隔发射玩家弹。"""
+        self.fire_timer = max(0.0, self.fire_timer - dt)
+        if self.shooting and self.fire_timer <= 0.0:
+            self.player_shots.append(
+                PlayerShot(self.player.pos.x, self.player.pos.y - self.player.radius)
+            )
+            self.fire_timer = config.PLAYER_FIRE_INTERVAL
 
-        cx = random.uniform(80, config.SCREEN_W - 80)
-        cy = -10.0
-        count = 12
-        base_angle = math.radians(random.uniform(40, 140))
-        for i in range(count):
-            angle = base_angle + (i - count / 2) * math.radians(6)
-            vx = math.cos(angle) * config.BULLET_SPEED
-            vy = math.sin(angle) * config.BULLET_SPEED
-            color = config.CYAN if i % 2 else config.RED
-            self.bullets.append(Bullet(cx, cy, vx, vy, color=color))
+    def _spawn_boss_attack(self) -> None:
+        """按 Boss 阶段发射扇形瞄准弹或八方向环形弹。"""
+        if self.boss.phase == 1:
+            direction = self.player.pos - self.boss.pos
+            if direction.length_squared() == 0:
+                direction = Vector2(0.0, 1.0)
+            base_angle = math.atan2(direction.y, direction.x)
+            middle = (config.BOSS_FAN_COUNT - 1) / 2
+            for i in range(config.BOSS_FAN_COUNT):
+                offset = (i - middle) * math.radians(config.BOSS_FAN_STEP_DEGREES)
+                angle = base_angle + offset
+                color = config.CYAN if i % 2 else config.RED
+                self.bullets.append(Bullet(
+                    self.boss.pos.x,
+                    self.boss.pos.y,
+                    math.cos(angle) * config.BOSS_ATTACK_SPEED,
+                    math.sin(angle) * config.BOSS_ATTACK_SPEED,
+                    color=color,
+                ))
+            return
+
+        for i in range(config.BOSS_RING_COUNT):
+            angle = math.tau * i / config.BOSS_RING_COUNT
+            self.bullets.append(Bullet(
+                self.boss.pos.x,
+                self.boss.pos.y,
+                math.cos(angle) * config.BOSS_ATTACK_SPEED,
+                math.sin(angle) * config.BOSS_ATTACK_SPEED,
+                color=config.CYAN if i % 2 else config.RED,
+            ))
+
+    def _update_boss_attacks(self, dt: float) -> None:
+        if not self.boss.alive:
+            return
+        self.boss_attack_timer -= dt
+        if self.boss_attack_timer > 0.0:
+            return
+
+        self._spawn_boss_attack()
+        interval = (config.BOSS_PHASE1_INTERVAL if self.boss.phase == 1
+                    else config.BOSS_PHASE2_INTERVAL)
+        self.boss_attack_timer = interval
+
+    def _check_boss_collisions(self) -> None:
+        """用相对运动线段检测玩家弹与移动 Boss 的碰撞。"""
+        if not self.boss.alive:
+            return
+
+        for shot in self.player_shots:
+            if not shot.alive:
+                continue
+            x1 = shot.prev_pos.x - self.boss.prev_pos.x
+            y1 = shot.prev_pos.y - self.boss.prev_pos.y
+            x2 = shot.pos.x - self.boss.pos.x
+            y2 = shot.pos.y - self.boss.pos.y
+            if collision.segment_circle(
+                    x1, y1, x2, y2, 0.0, 0.0,
+                    shot.radius + self.boss.radius):
+                shot.alive = False
+                self.boss.take_damage(shot.damage)
+                if not self.boss.alive:
+                    break
+
+        self.player_shots = [shot for shot in self.player_shots if shot.alive]
 
     def _check_collisions(self) -> None:
         """双层判定：擦弹区（外层，不致命）/ 命中区（内层，致命）。
@@ -158,14 +217,20 @@ class Game:
         if self.paused:
             return
 
-        self.focus = self._read_player_input()
+        self.focus, self.shooting = self._read_player_input()
         self.player.update(dt)
 
         # 限制在窗口内
         self.player.pos.x = max(0, min(config.SCREEN_W, self.player.pos.x))
         self.player.pos.y = max(0, min(config.SCREEN_H, self.player.pos.y))
 
-        self._spawn_bullets(dt)
+        self.boss.update(dt)
+        self._spawn_player_shots(dt)
+        for shot in self.player_shots:
+            shot.update(dt)
+        self._check_boss_collisions()
+
+        self._update_boss_attacks(dt)
         for b in self.bullets:
             b.update(dt)
         self.bullets = [b for b in self.bullets if b.alive]
