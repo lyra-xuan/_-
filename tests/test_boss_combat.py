@@ -25,12 +25,22 @@ class BossCombatTests(unittest.TestCase):
             config.SCREEN_W, config.SCREEN_H, config.GRID_CELL_SIZE
         )
         game.paused = False
+        game.scene = Game.SCENE_PLAYING
+        game.menu_selection = 0
         game.graze_total = 0
         game.hit_total = 0
         game.hit_flash = 0.0
         game.victory = False
         game.running = True
         return game
+
+    def dispatch_keys(self, game: Game, *keys: int) -> None:
+        events = [
+            pygame.event.Event(pygame.KEYDOWN, key=key)
+            for key in keys
+        ]
+        with patch.object(pygame.event, "get", return_value=events):
+            game._handle_events()
 
     def test_game_disables_text_input_for_keyboard_controls(self) -> None:
         with (
@@ -41,10 +51,53 @@ class BossCombatTests(unittest.TestCase):
             patch("pygame.time.Clock"),
             patch("src.game._load_font"),
         ):
-            Game()
+            game = Game()
 
         init.assert_called_once_with()
         stop_text_input.assert_called_once_with()
+        self.assertEqual(game.scene, Game.SCENE_TITLE)
+
+    def test_title_selection_opens_controls_and_returns(self) -> None:
+        game = self.make_game()
+        game.scene = Game.SCENE_TITLE
+
+        self.dispatch_keys(game, pygame.K_DOWN, pygame.K_RETURN)
+        self.assertEqual(game.scene, Game.SCENE_CONTROLS)
+
+        self.dispatch_keys(game, pygame.K_ESCAPE)
+        self.assertEqual(game.scene, Game.SCENE_TITLE)
+
+    def test_title_enter_starts_the_boss_fight(self) -> None:
+        game = self.make_game()
+        game.scene = Game.SCENE_TITLE
+
+        self.dispatch_keys(game, pygame.K_RETURN)
+
+        self.assertEqual(game.scene, Game.SCENE_PLAYING)
+
+    def test_title_exit_item_and_escape_close_the_game(self) -> None:
+        game = self.make_game()
+        game.scene = Game.SCENE_TITLE
+        self.dispatch_keys(game, pygame.K_UP, pygame.K_RETURN)
+        self.assertFalse(game.running)
+
+        game = self.make_game()
+        game.scene = Game.SCENE_TITLE
+        self.dispatch_keys(game, pygame.K_ESCAPE)
+        self.assertFalse(game.running)
+
+    def test_gameplay_does_not_advance_while_on_title(self) -> None:
+        game = self.make_game()
+        game.scene = Game.SCENE_TITLE
+        boss_position = game.boss.pos.copy()
+        attack_timer = game.boss_attack_timer
+
+        game.update(1.0)
+
+        self.assertEqual(game.boss.pos, boss_position)
+        self.assertEqual(game.boss_attack_timer, attack_timer)
+        self.assertEqual(game.bullets, [])
+
 
     def test_f1_toggles_pause_and_space_does_not(self) -> None:
         game = self.make_game()

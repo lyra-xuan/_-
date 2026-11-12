@@ -26,6 +26,11 @@ def _load_font(size: int) -> pygame.font.Font:
 class Game:
     """游戏主体：窗口、主循环、输入、碰撞与渲染。"""
 
+    SCENE_TITLE = "title"
+    SCENE_CONTROLS = "controls"
+    SCENE_PLAYING = "playing"
+    MENU_ITEMS = ("开始游戏", "操作说明", "退出游戏")
+
     def __init__(self) -> None:
         pygame.init()
         self.screen = pygame.display.set_mode((config.SCREEN_W, config.SCREEN_H))
@@ -36,6 +41,8 @@ class Game:
         self.font_big = _load_font(30)
 
         self.running = True
+        self.scene = self.SCENE_TITLE
+        self.menu_selection = 0
         self.paused = False
         self.victory = False
         self.focus = False            # 是否处于低速（focus）状态，由 update 写入
@@ -64,14 +71,38 @@ class Game:
             if event.type == pygame.QUIT:
                 self.running = False
             elif event.type == pygame.KEYDOWN:
-                if event.key == pygame.K_ESCAPE:
+                self._handle_keydown(event.key)
+
+    def _handle_keydown(self, key: int) -> None:
+        if self.scene == self.SCENE_TITLE:
+            if key == pygame.K_UP:
+                self.menu_selection = (self.menu_selection - 1) % len(self.MENU_ITEMS)
+            elif key == pygame.K_DOWN:
+                self.menu_selection = (self.menu_selection + 1) % len(self.MENU_ITEMS)
+            elif key in (pygame.K_RETURN, pygame.K_KP_ENTER):
+                if self.menu_selection == 0:
+                    self.scene = self.SCENE_PLAYING
+                elif self.menu_selection == 1:
+                    self.scene = self.SCENE_CONTROLS
+                else:
                     self.running = False
-                elif event.key == pygame.K_r and self.victory:
-                    self._reset_run()
-                elif event.key == pygame.K_z:
-                    self.shoot_requested = True
-                elif event.key == pygame.K_F1:
-                    self.paused = not self.paused
+            elif key == pygame.K_ESCAPE:
+                self.running = False
+            return
+
+        if self.scene == self.SCENE_CONTROLS:
+            if key in (pygame.K_ESCAPE, pygame.K_RETURN, pygame.K_KP_ENTER):
+                self.scene = self.SCENE_TITLE
+            return
+
+        if key == pygame.K_ESCAPE:
+            self.running = False
+        elif key == pygame.K_r and self.victory:
+            self._reset_run()
+        elif key == pygame.K_z:
+            self.shoot_requested = True
+        elif key == pygame.K_F1:
+            self.paused = not self.paused
 
     def _read_player_input(self) -> tuple[bool, bool]:
         """读取玩家移动、低速和射击输入。"""
@@ -250,6 +281,8 @@ class Game:
         self.player.graze_count = 0
 
     def update(self, dt: float) -> None:
+        if self.scene != self.SCENE_PLAYING:
+            return
         if self.paused or self.victory:
             self.shoot_requested = False
             return
@@ -285,6 +318,15 @@ class Game:
     # 渲染
     # ------------------------------------------------------------------ #
     def _render(self) -> None:
+        if self.scene == self.SCENE_TITLE:
+            self.screen.fill(config.BLACK)
+            self._draw_title_screen()
+            return
+        if self.scene == self.SCENE_CONTROLS:
+            self.screen.fill(config.BLACK)
+            self._draw_controls_screen()
+            return
+
         self.screen.fill(config.BLACK)
 
         self.boss.draw(self.screen)
@@ -308,6 +350,57 @@ class Game:
             self._draw_center_text("已暂停  (F1 继续)", config.YELLOW)
         elif self.victory:
             self._draw_center_text("Boss 击破！按 R 重新开始", config.YELLOW)
+
+    def _draw_title_screen(self) -> None:
+        center = (config.SCREEN_W // 2, 164)
+        for radius, color in ((76, config.BLUE), (58, config.CYAN), (34, config.GRAY)):
+            pygame.draw.circle(self.screen, color, center, radius, 1)
+        pygame.draw.circle(self.screen, config.YELLOW, center, 5)
+        for x, y, radius in (
+                (42, 74, 2), (95, 126, 2), (410, 80, 2), (446, 178, 2),
+                (58, 246, 1), (387, 238, 2), (118, 276, 1), (354, 292, 1)):
+            pygame.draw.circle(self.screen, config.CYAN, (x, y), radius)
+
+        self._draw_text_centered("星河弹幕", 155, config.WHITE, self.font_big)
+        self._draw_text_centered(
+            "单关弹幕射击 · 碰撞检测实践", 216, config.CYAN, self.font
+        )
+
+        for index, label in enumerate(self.MENU_ITEMS):
+            y = 326 + index * 56
+            rect = pygame.Rect(config.SCREEN_W // 2 - 126, y - 21, 252, 42)
+            if index == self.menu_selection:
+                pygame.draw.rect(self.screen, config.CYAN, rect, 1)
+                color = config.YELLOW
+                label = f">> {label} <<"
+            else:
+                color = config.WHITE
+            self._draw_text_centered(label, y, color, self.font)
+
+        self._draw_text_centered("方向键选择    Enter 确认", 536, config.GRAY, self.font)
+        self._draw_text_centered("程序绘制 · 原创演示内容", 574, config.GRAY, self.font)
+
+    def _draw_controls_screen(self) -> None:
+        self._draw_text_centered("操作说明", 92, config.CYAN, self.font_big)
+        rows = (
+            ("方向键 / WASD", "移动"),
+            ("Shift", "低速移动，便于躲避弹幕"),
+            ("Z", "点按单发，按住连续射击"),
+            ("F1", "暂停或继续"),
+            ("R", "胜利后重新开始"),
+            ("Esc", "战斗时退出游戏"),
+        )
+        for index, (key, action) in enumerate(rows):
+            y = 184 + index * 48
+            self._draw_text_centered(key, y, config.YELLOW, self.font)
+            self._draw_text_centered(action, y + 22, config.WHITE, self.font)
+        self._draw_text_centered("Enter / Esc 返回标题页", 558, config.GRAY, self.font)
+
+    def _draw_text_centered(
+            self, text: str, y: int, color, font: pygame.font.Font) -> None:
+        surface = font.render(text, True, color)
+        rect = surface.get_rect(center=(config.SCREEN_W // 2, y))
+        self.screen.blit(surface, rect)
 
     def _draw_hud(self) -> None:
         bar = pygame.Rect(8, 8, config.SCREEN_W - 16, 12)
