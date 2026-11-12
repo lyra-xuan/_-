@@ -29,6 +29,7 @@ class Game:
     def __init__(self) -> None:
         pygame.init()
         self.screen = pygame.display.set_mode((config.SCREEN_W, config.SCREEN_H))
+        pygame.key.stop_text_input()
         pygame.display.set_caption("弹幕射击 - 碰撞检测 Demo")
         self.clock = pygame.time.Clock()
         self.font = _load_font(18)
@@ -69,7 +70,7 @@ class Game:
                     self._reset_run()
                 elif event.key == pygame.K_z:
                     self.shoot_requested = True
-                elif event.key in (pygame.K_p, pygame.K_SPACE):
+                elif event.key == pygame.K_F1:
                     self.paused = not self.paused
 
     def _read_player_input(self) -> tuple[bool, bool]:
@@ -90,7 +91,8 @@ class Game:
             move = move.normalize()
         speed = config.PLAYER_SPEED * (config.PLAYER_FOCUS_FACTOR if focus else 1.0)
         self.player.vel = move * speed
-        return focus, keys[pygame.K_z] or self.shoot_requested
+        shooting = bool(keys[pygame.K_z] or self.shoot_requested)
+        return focus, shooting
 
     # ------------------------------------------------------------------ #
     # 逻辑更新
@@ -303,7 +305,7 @@ class Game:
             )
 
         if self.paused:
-            self._draw_center_text("已暂停  (P / 空格 继续)", config.YELLOW)
+            self._draw_center_text("已暂停  (F1 继续)", config.YELLOW)
         elif self.victory:
             self._draw_center_text("Boss 击破！按 R 重新开始", config.YELLOW)
 
@@ -321,7 +323,7 @@ class Game:
         lines = [
             f"Boss 阶段 {self.boss.phase}  擦弹 {self.graze_total}  命中 {self.hit_total}",
             f"敌弹数量 {len(self.bullets)}",
-            "方向键/WASD 移动  Shift 低速  Z 点射/按住连发  P 暂停",
+            "方向键/WASD 移动  Shift 低速  Z 点射/按住连发  F1 暂停",
         ]
         y = 26
         for line in lines:

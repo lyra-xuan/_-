@@ -32,6 +32,39 @@ class BossCombatTests(unittest.TestCase):
         game.running = True
         return game
 
+    def test_game_disables_text_input_for_keyboard_controls(self) -> None:
+        with (
+            patch("pygame.init") as init,
+            patch("pygame.display.set_mode"),
+            patch("pygame.key.stop_text_input") as stop_text_input,
+            patch("pygame.display.set_caption"),
+            patch("pygame.time.Clock"),
+            patch("src.game._load_font"),
+        ):
+            Game()
+
+        init.assert_called_once_with()
+        stop_text_input.assert_called_once_with()
+
+    def test_f1_toggles_pause_and_space_does_not(self) -> None:
+        game = self.make_game()
+
+        with patch.object(
+            pygame.event,
+            "get",
+            return_value=[pygame.event.Event(pygame.KEYDOWN, key=pygame.K_SPACE)],
+        ):
+            game._handle_events()
+        self.assertFalse(game.paused)
+
+        with patch.object(
+            pygame.event,
+            "get",
+            return_value=[pygame.event.Event(pygame.KEYDOWN, key=pygame.K_F1)],
+        ):
+            game._handle_events()
+        self.assertTrue(game.paused)
+
     def test_held_shooting_fires_at_configured_interval(self) -> None:
         game = self.make_game()
         game.shooting = True
