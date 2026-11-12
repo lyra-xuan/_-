@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# 打包/构建产物
+build/
+dist/
+*.spec
+
+# IDE / 编辑器
+.vscode/
+.idea/
+*.swp
+
+# 系统文件
+Thumbs.db
+.DS_Store
+
+# 游戏运行时产物（存档/日志/截图）
+*.log
+saves/
+screenshots/
