@@ -12,12 +12,23 @@ from pygame.math import Vector2
 from . import config
 
 
+_OVERLAY_CACHE: dict[tuple, pygame.Surface] = {}
+
+
 def draw_translucent_circle(surface: pygame.Surface, color: tuple[int, int, int],
                             center: tuple[float, float], radius: int,
                             alpha: int = 60) -> None:
-    """在 surface 上叠加一个半透明圆（用带 alpha 的临时表面实现）。"""
-    overlay = pygame.Surface((radius * 2, radius * 2), pygame.SRCALPHA)
-    pygame.draw.circle(overlay, (*color, alpha), (radius, radius), radius)
+    """在 surface 上叠加一个半透明圆。
+
+    半透明圆需借助带 alpha 的临时表面实现，这里按 (颜色, 半径, alpha) 缓存，
+    避免每帧重复创建 Surface。
+    """
+    key = (color, radius, alpha)
+    overlay = _OVERLAY_CACHE.get(key)
+    if overlay is None:
+        overlay = pygame.Surface((radius * 2, radius * 2), pygame.SRCALPHA)
+        pygame.draw.circle(overlay, (*color, alpha), (radius, radius), radius)
+        _OVERLAY_CACHE[key] = overlay
     surface.blit(overlay, (center[0] - radius, center[1] - radius))
 
 

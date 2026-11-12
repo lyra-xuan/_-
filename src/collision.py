@@ -54,7 +54,7 @@ def segment_circle(x1: float, y1: float, x2: float, y2: float,
     dx = x2 - x1
     dy = y2 - y1
     seg_len_sq = dx * dx + dy * dy
-    if seg_len_sq == 0.0:                      # 线段退化为点
+    if seg_len_sq < 1e-9:                      # 线段退化为点（浮点容差）
         return point_in_circle(x1, y1, cx, cy, r)
 
     # 圆心在线段方向上的投影参数 t，并夹紧到 [0, 1]

@@ -37,9 +37,13 @@ class Game:
 
         self.running = True
         self.paused = False
+        self.focus = False            # 是否处于低速（focus）状态，由 update 写入
 
         self.player = Player(config.SCREEN_W / 2, config.SCREEN_H - 80)
         self.bullets: list[Bullet] = []
+        # 空间网格复用同一个实例，每帧 clear 后重新插入，避免反复新建
+        self.grid = collision.SpatialGrid(config.SCREEN_W, config.SCREEN_H,
+                                          config.GRID_CELL_SIZE)
         self.graze_total = 0
         self.hit_total = 0
         self.hit_flash = 0.0          # 命中时的红屏闪烁计时
@@ -102,33 +106,36 @@ class Game:
     def _check_collisions(self) -> None:
         """双层判定：擦弹区（外层，不致命）/ 命中区（内层，致命）。
 
-        宽相位用空间网格先把子弹按格分区，缩小精确检测的候选集；
-        精确检测用线段-圆（扫掠），避免高速子弹穿模。
+        宽相位：把子弹按格插入空间网格，只对玩家邻域格子内的候选子弹做精确检测，
+        避免对所有子弹两两检测。
+        精确检测：用线段-圆（扫掠）判定，把子弹一帧位移当作线段，防止高速穿模。
         """
-        grid = collision.SpatialGrid(config.SCREEN_W, config.SCREEN_H,
-                                     config.GRID_CELL_SIZE)
+        self.grid.clear()
         for b in self.bullets:
-            grid.insert(b, b.pos.x, b.pos.y)
+            self.grid.insert(b, b.pos.x, b.pos.y)
 
         px, py = self.player.pos.x, self.player.pos.y
-        for b in self.bullets:
+        # 查询半径 = 擦弹半径 + 子弹半径，保证所有可能相交的子弹都落在候选格内
+        # （BULLET_RADIUS 为子弹半径上限，本项目所有子弹均不超过该值）
+        candidates = self.grid.query(px, py,
+                                     self.player.graze_radius + config.BULLET_RADIUS)
+        for b in candidates:
             if not b.alive:
                 continue
 
-            # 宽相位：只取玩家附近的子弹
-            if b not in grid.query(px, py, self.player.graze_radius + b.radius + 1):
-                continue
-
             # 扫掠：上一帧位置 -> 当前位置 视为线段
-            if collision.segment_circle(b.prev_pos.x, b.prev_pos.y,
-                                        b.pos.x, b.pos.y,
+            x1, y1 = b.prev_pos.x, b.prev_pos.y
+            x2, y2 = b.pos.x, b.pos.y
+
+            # 先判内层命中区，命中后直接跳过擦弹判定
+            if collision.segment_circle(x1, y1, x2, y2,
                                         px, py, self.player.radius + b.radius):
                 self._on_player_hit(b)
                 continue
 
-            # 未命中，再判擦弹
+            # 未命中，再判外层擦弹区（每颗子弹只计一次）
             if not b.grazed and collision.segment_circle(
-                    b.prev_pos.x, b.prev_pos.y, b.pos.x, b.pos.y,
+                    x1, y1, x2, y2,
                     px, py, self.player.graze_radius + b.radius):
                 b.grazed = True
                 self.player.graze_count += 1
@@ -146,7 +153,7 @@ class Game:
         if self.paused:
             return
 
-        self._read_player_input()
+        self.focus = self._read_player_input()
         self.player.update(dt)
 
         # 限制在窗口内
@@ -169,8 +176,7 @@ class Game:
     def _render(self) -> None:
         self.screen.fill(config.BLACK)
 
-        focus = self._read_player_input()
-        self.player.draw(self.screen, focus=focus)
+        self.player.draw(self.screen, focus=self.focus)
         for b in self.bullets:
             b.draw(self.screen)
 
