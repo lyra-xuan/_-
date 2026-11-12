@@ -32,7 +32,10 @@ class BossCombatTests(unittest.TestCase):
         game.graze_total = 0
         game.hit_total = 0
         game.hit_flash = 0.0
+        game.lives = config.PLAYER_LIVES
+        game.invulnerable_timer = 0.0
         game.victory = False
+        game.game_over = False
         game.running = True
         return game
 
@@ -246,6 +249,109 @@ class BossCombatTests(unittest.TestCase):
         self.assertEqual(game.bullets, [])
         self.assertEqual(game.player_shots, [])
 
+    def test_player_hit_consumes_life_clears_bullets_and_respawns(self) -> None:
+        game = self.make_game()
+        bullet = Bullet(100, 100, 0, 100)
+        game.bullets = [bullet]
+        game.player.graze_count = 3
+        hit_position = Vector2(400, 500)
+        game.player.pos = hit_position
+        game.player.prev_pos = Vector2(hit_position)
+
+        game._on_player_hit(bullet)
+
+        self.assertEqual(game.lives, config.PLAYER_LIVES - 1)
+        self.assertEqual(game.invulnerable_timer, config.PLAYER_INVULNERABLE_TIME)
+        self.assertEqual(game.bullets, [])
+        self.assertEqual(
+            game.player.pos,
+            Vector2(config.SCREEN_W / 2, config.SCREEN_H - config.PLAYER_START_MARGIN),
+        )
+        self.assertEqual(game.player.prev_pos, game.player.pos)
+        self.assertEqual(game.player.graze_count, 0)
+        self.assertEqual(game.hit_total, 1)
+        self.assertFalse(game.game_over)
+
+    def test_invulnerability_prevents_another_hit(self) -> None:
+        game = self.make_game()
+        game.invulnerable_timer = config.PLAYER_INVULNERABLE_TIME / 2
+        bullet = Bullet(game.player.pos.x, game.player.pos.y, 0, 0)
+        game.bullets = [bullet]
+
+        game._check_collisions()
+
+        self.assertEqual(game.lives, config.PLAYER_LIVES)
+        self.assertEqual(game.hit_total, 0)
+        self.assertTrue(bullet.alive)
+
+    def test_invulnerability_timer_counts_down_during_play(self) -> None:
+        game = self.make_game()
+        game.invulnerable_timer = config.PLAYER_INVULNERABLE_TIME
+
+        with patch.object(game, "_read_player_input", return_value=(False, False)):
+            game.update(0.5)
+
+        self.assertAlmostEqual(
+            game.invulnerable_timer,
+            config.PLAYER_INVULNERABLE_TIME - 0.5,
+        )
+
+    def test_last_life_enters_game_over_and_clears_combat(self) -> None:
+        game = self.make_game()
+        game.lives = 1
+        game.bullets = [Bullet(100, 100, 0, 100)]
+        game.player_shots = [PlayerShot(100, 100)]
+        bullet = Bullet(200, 200, 0, 100)
+
+        game._on_player_hit(bullet)
+
+        self.assertEqual(game.lives, 0)
+        self.assertTrue(game.game_over)
+        self.assertEqual(game.bullets, [])
+        self.assertEqual(game.player_shots, [])
+        self.assertFalse(game.shooting)
+        self.assertEqual(game.invulnerable_timer, 0.0)
+
+    def test_game_over_freezes_boss_and_attack_timer(self) -> None:
+        game = self.make_game()
+        game.game_over = True
+        boss_position = game.boss.pos.copy()
+        attack_timer = game.boss_attack_timer
+
+        game.update(1.0)
+
+        self.assertEqual(game.boss.pos, boss_position)
+        self.assertEqual(game.boss_attack_timer, attack_timer)
+        self.assertEqual(game.bullets, [])
+
+    def test_game_over_r_restarts_a_clean_run(self) -> None:
+        game = self.make_game()
+        game.game_over = True
+        game.lives = 0
+        game.invulnerable_timer = 0.5
+        game.boss.take_damage(game.boss.max_hp)
+
+        self.dispatch_keys(game, pygame.K_r)
+
+        self.assertFalse(game.game_over)
+        self.assertFalse(game.victory)
+        self.assertEqual(game.scene, Game.SCENE_PLAYING)
+        self.assertEqual(game.lives, config.PLAYER_LIVES)
+        self.assertEqual(game.invulnerable_timer, 0.0)
+        self.assertEqual(game.boss.hp, config.BOSS_MAX_HP)
+
+    def test_game_over_enter_and_escape_return_to_title(self) -> None:
+        for key in (pygame.K_RETURN, pygame.K_ESCAPE):
+            with self.subTest(key=key):
+                game = self.make_game()
+                game.game_over = True
+
+                self.dispatch_keys(game, key)
+
+                self.assertEqual(game.scene, Game.SCENE_TITLE)
+                self.assertFalse(game.game_over)
+                self.assertTrue(game.running)
+
     def test_reset_run_restores_clean_boss_encounter(self) -> None:
         game = self.make_game()
         game.boss.take_damage(game.boss.max_hp)
@@ -256,6 +362,9 @@ class BossCombatTests(unittest.TestCase):
         game.graze_total = 4
         game.hit_total = 2
         game.hit_flash = 0.2
+        game.lives = 1
+        game.invulnerable_timer = 0.8
+        game.game_over = True
         game.fire_timer = 0.1
         game.boss_attack_timer = 0.1
 
@@ -270,6 +379,9 @@ class BossCombatTests(unittest.TestCase):
         self.assertEqual(game.player_shots, [])
         self.assertFalse(game.paused)
         self.assertFalse(game.victory)
+        self.assertFalse(game.game_over)
+        self.assertEqual(game.lives, config.PLAYER_LIVES)
+        self.assertEqual(game.invulnerable_timer, 0.0)
         self.assertEqual(game.graze_total, 0)
         self.assertEqual(game.hit_total, 0)
         self.assertEqual(game.hit_flash, 0.0)

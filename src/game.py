@@ -63,6 +63,9 @@ class Game:
         self.menu_selection = 0
         self.paused = False
         self.victory = False
+        self.game_over = False
+        self.lives = config.PLAYER_LIVES
+        self.invulnerable_timer = 0.0
         self.focus = False            # 是否处于低速（focus）状态，由 update 写入
 
         self.player = Player(
@@ -101,6 +104,7 @@ class Game:
                 self.menu_selection = (self.menu_selection + 1) % len(self.MENU_ITEMS)
             elif key in (pygame.K_RETURN, pygame.K_KP_ENTER):
                 if self.menu_selection == 0:
+                    self._reset_run()
                     self.scene = self.SCENE_PLAYING
                 elif self.menu_selection == 1:
                     self.scene = self.SCENE_CONTROLS
@@ -113,6 +117,15 @@ class Game:
         if self.scene == self.SCENE_CONTROLS:
             if key in (pygame.K_ESCAPE, pygame.K_RETURN, pygame.K_KP_ENTER):
                 self.scene = self.SCENE_TITLE
+            return
+
+        if self.game_over:
+            if key == pygame.K_r:
+                self._reset_run()
+            elif key in (pygame.K_RETURN, pygame.K_KP_ENTER, pygame.K_ESCAPE):
+                self.game_over = False
+                self.scene = self.SCENE_TITLE
+                self.menu_selection = 0
             return
 
         if key == pygame.K_ESCAPE:
@@ -247,9 +260,13 @@ class Game:
         self.graze_total = 0
         self.hit_total = 0
         self.hit_flash = 0.0
+        self.lives = config.PLAYER_LIVES
+        self.invulnerable_timer = 0.0
         self.focus = False
         self.paused = False
         self.victory = False
+        self.game_over = False
+        self.scene = self.SCENE_PLAYING
 
     def _check_collisions(self) -> None:
         """双层判定：擦弹区（外层，不致命）/ 命中区（内层，致命）。
@@ -272,7 +289,7 @@ class Game:
         candidates = self.grid.query(px, py, query_radius)
         p0x, p0y = self.player.prev_pos.x, self.player.prev_pos.y
         for b in candidates:
-            if not b.alive:
+            if not b.alive or self.invulnerable_timer > 0.0:
                 continue
 
             # 转为相对运动：子弹上一帧相对玩家上一帧，至本帧相对位置。
@@ -294,23 +311,37 @@ class Game:
                 self.graze_total += 1
 
     def _on_player_hit(self, bullet: Bullet) -> None:
+        if self.invulnerable_timer > 0.0 or self.game_over:
+            return
+
         bullet.alive = False
         self.hit_total += 1
         self.hit_flash = 0.25
-        # 骨架阶段：被击中不结束，重置位置并清空擦弹连击
+        self.lives -= 1
+        self.bullets.clear()
         self.player.pos = Vector2(
             config.SCREEN_W / 2, config.SCREEN_H - config.PLAYER_START_MARGIN
         )
         self.player.prev_pos = Vector2(self.player.pos)
         self.player.graze_count = 0
+        if self.lives <= 0:
+            self.lives = 0
+            self.game_over = True
+            self.invulnerable_timer = 0.0
+            self.hit_flash = 0.0
+            self.player_shots.clear()
+            self.shooting = False
+        else:
+            self.invulnerable_timer = config.PLAYER_INVULNERABLE_TIME
 
     def update(self, dt: float) -> None:
         if self.scene != self.SCENE_PLAYING:
             return
-        if self.paused or self.victory:
+        if self.paused or self.victory or self.game_over:
             self.shoot_requested = False
             return
 
+        self.invulnerable_timer = max(0.0, self.invulnerable_timer - dt)
         self.focus, self.shooting = self._read_player_input()
         self.player.update(dt)
 
@@ -355,7 +386,12 @@ class Game:
         for shot in self.player_shots:
             if shot.alive:
                 shot.draw(self.screen)
-        self.player.draw(self.screen, focus=self.focus)
+        blinking = (
+            self.invulnerable_timer > 0.0
+            and int(self.invulnerable_timer * 12) % 2 == 0
+        )
+        if not blinking:
+            self.player.draw(self.screen, focus=self.focus)
         for b in self.bullets:
             b.draw(self.screen)
 
@@ -370,6 +406,10 @@ class Game:
 
         if self.paused:
             self._draw_center_text("已暂停  (F1 继续)", config.YELLOW)
+        elif self.game_over:
+            self._draw_center_text(
+                "游戏失败！R 重新开始  Enter / Esc 返回标题", config.RED
+            )
         elif self.victory:
             self._draw_center_text("Boss 击破！按 R 重新开始", config.YELLOW)
 
@@ -408,7 +448,8 @@ class Game:
             ("Shift", "低速移动，便于躲避弹幕"),
             ("Z", "点按单发，按住连续射击"),
             ("F1", "暂停或继续"),
-            ("R", "胜利后重新开始"),
+            ("R", "胜利或失败后重新开始"),
+            ("Enter / Esc", "失败后返回标题页"),
             ("Esc", "战斗时退出游戏"),
         )
         for index, (key, action) in enumerate(rows):
@@ -437,6 +478,7 @@ class Game:
         pygame.draw.rect(self.screen, config.WHITE, bar, 1)
 
         lines = [
+            f"生命 {self.lives} / {config.PLAYER_LIVES}",
             f"Boss 阶段 {self.boss.phase}  擦弹 {self.graze_total}  命中 {self.hit_total}",
             f"敌弹数量 {len(self.bullets)}",
         ]
