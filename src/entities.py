@@ -53,9 +53,14 @@ class Player(Entity):
 
     def __init__(self, x: float, y: float) -> None:
         super().__init__(x, y)
+        self.prev_pos = Vector2(self.pos)
         self.radius = config.PLAYER_HIT_RADIUS
         self.graze_radius = config.PLAYER_GRAZE_RADIUS
         self.graze_count = 0
+
+    def update(self, dt: float) -> None:
+        self.prev_pos = Vector2(self.pos)
+        super().update(dt)
 
     def draw(self, surface: pygame.Surface, focus: bool = False) -> None:
         # 外层擦弹区（半透明），低速移动时更醒目

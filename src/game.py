@@ -111,32 +111,36 @@ class Game:
         精确检测：用线段-圆（扫掠）判定，把子弹一帧位移当作线段，防止高速穿模。
         """
         self.grid.clear()
+        max_bullet_reach = 0.0
         for b in self.bullets:
             self.grid.insert(b, b.pos.x, b.pos.y)
+            travel = b.pos.distance_to(b.prev_pos)
+            max_bullet_reach = max(max_bullet_reach, b.radius + travel)
 
         px, py = self.player.pos.x, self.player.pos.y
-        # 查询半径 = 擦弹半径 + 子弹半径，保证所有可能相交的子弹都落在候选格内
-        # （BULLET_RADIUS 为子弹半径上限，本项目所有子弹均不超过该值）
-        candidates = self.grid.query(px, py,
-                                     self.player.graze_radius + config.BULLET_RADIUS)
+        player_travel = self.player.pos.distance_to(self.player.prev_pos)
+        # 将双方本帧位移和实际子弹半径纳入范围，确保扫掠命中的子弹不会被宽相位过滤。
+        query_radius = self.player.graze_radius + player_travel + max_bullet_reach
+        candidates = self.grid.query(px, py, query_radius)
+        p0x, p0y = self.player.prev_pos.x, self.player.prev_pos.y
         for b in candidates:
             if not b.alive:
                 continue
 
-            # 扫掠：上一帧位置 -> 当前位置 视为线段
-            x1, y1 = b.prev_pos.x, b.prev_pos.y
-            x2, y2 = b.pos.x, b.pos.y
+            # 转为相对运动：子弹上一帧相对玩家上一帧，至本帧相对位置。
+            x1, y1 = b.prev_pos.x - p0x, b.prev_pos.y - p0y
+            x2, y2 = b.pos.x - px, b.pos.y - py
 
             # 先判内层命中区，命中后直接跳过擦弹判定
-            if collision.segment_circle(x1, y1, x2, y2,
-                                        px, py, self.player.radius + b.radius):
+            if collision.segment_circle(x1, y1, x2, y2, 0.0, 0.0,
+                                        self.player.radius + b.radius):
                 self._on_player_hit(b)
                 continue
 
             # 未命中，再判外层擦弹区（每颗子弹只计一次）
             if not b.grazed and collision.segment_circle(
-                    x1, y1, x2, y2,
-                    px, py, self.player.graze_radius + b.radius):
+                    x1, y1, x2, y2, 0.0, 0.0,
+                    self.player.graze_radius + b.radius):
                 b.grazed = True
                 self.player.graze_count += 1
                 self.graze_total += 1
@@ -147,6 +151,7 @@ class Game:
         self.hit_flash = 0.25
         # 骨架阶段：被击中不结束，重置位置并清空擦弹连击
         self.player.pos = Vector2(config.SCREEN_W / 2, config.SCREEN_H - 80)
+        self.player.prev_pos = Vector2(self.player.pos)
         self.player.graze_count = 0
 
     def update(self, dt: float) -> None:
