@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import math
+from pathlib import Path
 
 import pygame
 from pygame.math import Vector2
@@ -39,6 +40,29 @@ class Game:
         self.clock = pygame.time.Clock()
         self.font = _load_font(18)
         self.font_big = _load_font(30)
+        asset_dir = Path(__file__).resolve().parent.parent / "assets" / "title"
+        background = pygame.image.load(str(asset_dir / "touhou-th06-title.jpg"))
+        crop_height = max(1, background.get_height() - 60)
+        crop_width = round(crop_height * config.SCREEN_W / config.SCREEN_H)
+        crop_left = max(0, (background.get_width() - crop_width) // 2)
+        background = background.subsurface(
+            (crop_left, 0, crop_width, crop_height)
+        )
+        self.title_background = pygame.transform.smoothscale(
+            background, (config.SCREEN_W, config.SCREEN_H)
+        )
+
+        menu_atlas = pygame.image.load(str(asset_dir / "project-striker-menu.webp"))
+        self.title_menu_images = tuple(
+            tuple(
+                pygame.transform.smoothscale(
+                    menu_atlas.subsurface((column * 256, row * 64, 256, 64)),
+                    (220, 55),
+                )
+                for column in (0, 1)
+            )
+            for row in (0, 3, 5)
+        )
 
         self.running = True
         self.scene = self.SCENE_TITLE
@@ -319,11 +343,9 @@ class Game:
     # ------------------------------------------------------------------ #
     def _render(self) -> None:
         if self.scene == self.SCENE_TITLE:
-            self.screen.fill(config.BLACK)
             self._draw_title_screen()
             return
         if self.scene == self.SCENE_CONTROLS:
-            self.screen.fill(config.BLACK)
             self._draw_controls_screen()
             return
 
@@ -352,36 +374,20 @@ class Game:
             self._draw_center_text("Boss 击破！按 R 重新开始", config.YELLOW)
 
     def _draw_title_screen(self) -> None:
-        center = (config.SCREEN_W // 2, 164)
-        for radius, color in ((76, config.BLUE), (58, config.CYAN), (34, config.GRAY)):
-            pygame.draw.circle(self.screen, color, center, radius, 1)
-        pygame.draw.circle(self.screen, config.YELLOW, center, 5)
-        for x, y, radius in (
-                (42, 74, 2), (95, 126, 2), (410, 80, 2), (446, 178, 2),
-                (58, 246, 1), (387, 238, 2), (118, 276, 1), (354, 292, 1)):
-            pygame.draw.circle(self.screen, config.CYAN, (x, y), radius)
+        self.screen.blit(self.title_background, (0, 0))
+        self._draw_text_centered("星河弹幕", 68, config.BLACK, self.font_big)
+        self._draw_text_centered("单关弹幕射击 · 碰撞检测实践", 105, config.BLACK, self.font)
 
-        self._draw_text_centered("星河弹幕", 155, config.WHITE, self.font_big)
-        self._draw_text_centered(
-            "单关弹幕射击 · 碰撞检测实践", 216, config.CYAN, self.font
-        )
+        for index, (selected_image, idle_image) in enumerate(self.title_menu_images):
+            image = selected_image if index == self.menu_selection else idle_image
+            self.screen.blit(image, (232, 420 + index * 58))
 
-        for index, label in enumerate(self.MENU_ITEMS):
-            y = 326 + index * 56
-            rect = pygame.Rect(config.SCREEN_W // 2 - 126, y - 21, 252, 42)
-            if index == self.menu_selection:
-                pygame.draw.rect(self.screen, config.CYAN, rect, 1)
-                color = config.YELLOW
-                label = f">> {label} <<"
-            else:
-                color = config.WHITE
-            self._draw_text_centered(label, y, color, self.font)
-
-        self._draw_text_centered("方向键选择    Enter 确认", 536, config.GRAY, self.font)
-        self._draw_text_centered("程序绘制 · 原创演示内容", 574, config.GRAY, self.font)
+        self._draw_text_centered("方向键选择    Enter 确认", 616, config.WHITE, self.font)
 
     def _draw_controls_screen(self) -> None:
-        self._draw_text_centered("操作说明", 92, config.CYAN, self.font_big)
+        self.screen.blit(self.title_background, (0, 0))
+        self._draw_text_centered("操作说明", 98, config.BLACK, self.font_big)
+
         rows = (
             ("方向键 / WASD", "移动"),
             ("Shift", "低速移动，便于躲避弹幕"),
@@ -391,10 +397,13 @@ class Game:
             ("Esc", "战斗时退出游戏"),
         )
         for index, (key, action) in enumerate(rows):
-            y = 184 + index * 48
-            self._draw_text_centered(key, y, config.YELLOW, self.font)
-            self._draw_text_centered(action, y + 22, config.WHITE, self.font)
-        self._draw_text_centered("Enter / Esc 返回标题页", 558, config.GRAY, self.font)
+            y = 354 + index * 38
+            self.screen.blit(self.font.render(key, True, config.WHITE), (32, y))
+            self.screen.blit(
+                self.font.render(action, True, config.WHITE),
+                (242, y),
+            )
+        self._draw_text_centered("Enter / Esc 返回标题页", 616, config.WHITE, self.font)
 
     def _draw_text_centered(
             self, text: str, y: int, color, font: pygame.font.Font) -> None:

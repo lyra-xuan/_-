@@ -49,6 +49,10 @@ class BossCombatTests(unittest.TestCase):
             patch("pygame.key.stop_text_input") as stop_text_input,
             patch("pygame.display.set_caption"),
             patch("pygame.time.Clock"),
+            patch(
+                "pygame.image.load",
+                side_effect=lambda _: pygame.Surface((640, 480), pygame.SRCALPHA),
+            ),
             patch("src.game._load_font"),
         ):
             game = Game()
