@@ -1,5 +1,7 @@
 import unittest
+from unittest.mock import patch
 
+import pygame
 from pygame.math import Vector2
 
 from src import collision, config
@@ -15,6 +17,7 @@ class BossCombatTests(unittest.TestCase):
         game.bullets = []
         game.player_shots = []
         game.shooting = False
+        game.shoot_requested = False
         game.fire_timer = 0.0
         game.boss_attack_timer = config.BOSS_PHASE1_INTERVAL
         game.boss_attack_phase = game.boss.phase
@@ -26,6 +29,7 @@ class BossCombatTests(unittest.TestCase):
         game.hit_total = 0
         game.hit_flash = 0.0
         game.victory = False
+        game.running = True
         return game
 
     def test_held_shooting_fires_at_configured_interval(self) -> None:
@@ -38,6 +42,39 @@ class BossCombatTests(unittest.TestCase):
 
         game._spawn_player_shots(0.1)
         self.assertEqual(len(game.player_shots), 2)
+
+    def test_quick_z_tap_fires_even_if_key_is_released_before_poll(self) -> None:
+        game = self.make_game()
+        events = [
+            pygame.event.Event(pygame.KEYDOWN, key=pygame.K_z),
+            pygame.event.Event(pygame.KEYUP, key=pygame.K_z),
+        ]
+
+        with patch.object(pygame.event, "get", return_value=events):
+            game._handle_events()
+
+        class NoKeys:
+            def __getitem__(self, key):
+                return False
+
+        with patch.object(pygame.key, "get_pressed", return_value=NoKeys()):
+            game.focus, game.shooting = game._read_player_input()
+        game._spawn_player_shots(0.0)
+
+        self.assertEqual(len(game.player_shots), 1)
+
+    def test_direction_and_z_input_can_be_active_together(self) -> None:
+        game = self.make_game()
+
+        class RightAndZ:
+            def __getitem__(self, key):
+                return key in (pygame.K_RIGHT, pygame.K_z)
+
+        with patch.object(pygame.key, "get_pressed", return_value=RightAndZ()):
+            game.focus, game.shooting = game._read_player_input()
+
+        self.assertEqual(game.player.vel.x, config.PLAYER_SPEED)
+        self.assertTrue(game.shooting)
 
     def test_player_shot_hits_moving_boss_using_relative_sweep(self) -> None:
         game = self.make_game()

@@ -47,6 +47,7 @@ class Game:
         self.grid = collision.SpatialGrid(config.SCREEN_W, config.SCREEN_H,
                                           config.GRID_CELL_SIZE)
         self.shooting = False
+        self.shoot_requested = False
         self.fire_timer = 0.0
         self.boss_attack_timer = config.BOSS_PHASE1_INTERVAL
         self.boss_attack_phase = self.boss.phase
@@ -66,6 +67,8 @@ class Game:
                     self.running = False
                 elif event.key == pygame.K_r and self.victory:
                     self._reset_run()
+                elif event.key == pygame.K_z:
+                    self.shoot_requested = True
                 elif event.key in (pygame.K_p, pygame.K_SPACE):
                     self.paused = not self.paused
 
@@ -87,7 +90,7 @@ class Game:
             move = move.normalize()
         speed = config.PLAYER_SPEED * (config.PLAYER_FOCUS_FACTOR if focus else 1.0)
         self.player.vel = move * speed
-        return focus, keys[pygame.K_z]
+        return focus, keys[pygame.K_z] or self.shoot_requested
 
     # ------------------------------------------------------------------ #
     # 逻辑更新
@@ -182,6 +185,7 @@ class Game:
         self.player_shots.clear()
         self.grid.clear()
         self.shooting = False
+        self.shoot_requested = False
         self.fire_timer = 0.0
         self.boss_attack_timer = config.BOSS_PHASE1_INTERVAL
         self.boss_attack_phase = self.boss.phase
@@ -245,6 +249,7 @@ class Game:
 
     def update(self, dt: float) -> None:
         if self.paused or self.victory:
+            self.shoot_requested = False
             return
 
         self.focus, self.shooting = self._read_player_input()
@@ -257,6 +262,7 @@ class Game:
         if self.boss.alive:
             self.boss.update(dt)
         self._spawn_player_shots(dt)
+        self.shoot_requested = False
         for shot in self.player_shots:
             shot.update(dt)
         self._check_boss_collisions()
@@ -315,7 +321,7 @@ class Game:
         lines = [
             f"Boss 阶段 {self.boss.phase}  擦弹 {self.graze_total}  命中 {self.hit_total}",
             f"敌弹数量 {len(self.bullets)}",
-            "方向键/WASD 移动  Shift 低速  Z 射击  P 暂停",
+            "方向键/WASD 移动  Shift 低速  Z 点射/按住连发  P 暂停",
         ]
         y = 26
         for line in lines:

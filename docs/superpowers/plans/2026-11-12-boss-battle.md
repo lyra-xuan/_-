@@ -46,6 +46,7 @@
 **Before checklist**
 
 - [x] Add a held-Z firing timer and player-shot collection to `Game`.
+- [x] Capture a Z key-down edge so a quick tap still fires once.
 - [x] Replace random top-edge spawning with attacks emitted from the boss.
 - [x] Phase 1 fires a five-shot aimed fan every 0.85 seconds.
 - [x] Phase 2 fires an eight-direction ring every 0.60 seconds.
@@ -57,9 +58,10 @@
 **Completion checklist**
 
 - [x] Added firing-interval, relative-motion hit, phase-timing, and defeated-Boss cleanup tests.
-- [x] All 12 tests pass.
+- [x] Added quick-tap and simultaneous movement/shooting input tests.
+- [x] All 16 tests pass.
 - [x] Independent review found and the implementation fixed phase-timer and projectile-cleanup issues.
-- [ ] Boss/player-shot drawing and victory feedback remain in Task 3.
+- [x] Boss/player-shot drawing and victory feedback completed in Task 3.
 
 ## Task 3: Feedback and Regression
 

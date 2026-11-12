@@ -37,7 +37,7 @@ python -m unittest discover -s tests -v
 |---|---|
 | 方向键 / WASD | 移动 |
 | Shift | 低速移动，便于躲避弹幕 |
-| Z | 按住连续射击 |
+| Z | 点按单发，按住连续射击 |
 | P / 空格 | 暂停或继续 |
 | R | 胜利后重新开始 |
 | Esc | 退出 |
