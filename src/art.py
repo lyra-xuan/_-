@@ -1,4 +1,9 @@
-"""Load the licensed Touhou 6 artwork used by the game scenes."""
+"""加载已获许可的东方红魔乡素材。
+
+素材以「图像 + 灰度遮罩」两张 PNG 成对存放，遮罩的红通道即 alpha，需要在
+载入时合成。所有帧坐标都是对图集实测得到的，集中登记在下面的清单里，
+渲染代码只按名字取用，避免坐标散落各处。
+"""
 from __future__ import annotations
 
 from pathlib import Path
@@ -7,91 +12,235 @@ import pygame
 
 from . import config
 
+_ASSET_ROOT = Path(__file__).resolve().parent.parent / "assets" / "gameplay"
+
+# --------------------------------------------------------------------------- #
+# 帧清单：格式 (x, y, w, h)，单位像素
+# --------------------------------------------------------------------------- #
+# 自机（player00）：上排 4 帧直立，下排左倾与右倾各 3 帧。
+PLAYER_FRAME_RECTS: dict[str, tuple[tuple[int, int, int, int], ...]] = {
+    "idle": ((3, 5, 23, 43), (35, 6, 22, 42), (68, 6, 23, 41), (100, 5, 25, 43)),
+    "left": ((3, 53, 22, 41), (36, 54, 23, 42), (71, 54, 21, 41)),
+    "right": ((136, 53, 23, 43), (168, 53, 22, 43), (200, 53, 22, 43)),
+}
+PLAYER_RENDER_SIZE = (config.PLAYER_SPRITE_WIDTH, config.PLAYER_SPRITE_HEIGHT)
+PLAYER_ICON_SIZE = (24, 45)
+
+# 大玉（etama3）：y=129 一行 8 色，30×30，x 从 1 起、列距 32。
+_LARGE_COLORS = (
+    "white", "red", "magenta", "purple", "cyan", "green", "yellow", "gray",
+)
+BULLET_LARGE_RECTS = {
+    name: (1 + index * 32, 129, 30, 30)
+    for index, name in enumerate(_LARGE_COLORS)
+}
+BULLET_LARGE_RENDER = (34, 34)
+
+# 米弹（etama3 下方两排）。
+BULLET_RICE_RECTS = (
+    (103, 160, 17, 32), (135, 160, 17, 32), (167, 160, 17, 32), (99, 192, 28, 32),
+)
+PLAYER_SHOT_RENDER = (14, 30)
+
+# 小玉（etama4）：y=241 一行 4 色，13×13，列距 64。
+BULLET_SMALL_RECTS = {
+    "white": (50, 241, 13, 13),
+    "red": (114, 241, 13, 13),
+    "green": (178, 241, 13, 13),
+    "blue": (242, 241, 13, 13),
+}
+BULLET_SMALL_RENDER = (18, 18)
+
+# 中玉（etama4）。
+BULLET_MID_RECTS = {
+    "white": (65, 209, 30, 30),
+    "red": (97, 209, 30, 30),
+    "green": (130, 209, 29, 29),
+}
+BULLET_MID_RENDER = (26, 26)
+
+# 爆散（etama4 左上角与下方）。
+BULLET_BURST_RECTS = ((1, 1, 62, 62), (2, 176, 61, 63))
+BULLET_BURST_RENDER = (86, 86)
+
+# 特效（eff00，自带 alpha，无需遮罩）。
+EFFECT_RECTS = ((33, 1, 30, 30), (66, 1, 29, 29), (3, 192, 61, 63), (50, 34, 13, 13))
+EFFECT_RENDER = (46, 46)
+
+# 妖精（stg1enm）：8 列网格，左上 4 帧为小型妖精。
+FAIRY_RECTS = ((5, 5, 23, 24), (35, 5, 26, 24), (69, 5, 24, 24), (101, 5, 24, 24))
+FAIRY_RENDER = (40, 42)
+
+# Boss 立绘（face12a / face12c / face10a）。
+BOSS_FACE_RECTS = ((4, 0, 252, 256), (4, 0, 248, 256), (0, 0, 256, 256))
+BOSS_FACE_RENDER = (176, 178)
+
+# 关卡背景（stg4bg）：图集内有效区域。
+STAGE_BG_RECT = (15, 15, 241, 210)
+
+
+def _compose(
+    sheet: pygame.Surface, mask: pygame.Surface, rect: tuple[int, int, int, int],
+) -> pygame.Surface:
+    """按矩形裁剪并用遮罩红通道合成 alpha。
+
+    只遍历目标帧的像素；python 逐像素循环对整张 256×256 图集太慢，
+    按帧裁剪后总量可控。
+    """
+    x, y, width, height = rect
+    source = sheet.subsurface((x, y, width, height))
+    alpha = mask.subsurface((x, y, width, height))
+    result = pygame.Surface((width, height), pygame.SRCALPHA, 32)
+    result.blit(source, (0, 0))
+    for row in range(height):
+        for column in range(width):
+            red, green, blue, _ = result.get_at((column, row))
+            result.set_at((column, row), (red, green, blue, alpha.get_at((column, row)).r))
+    return result
+
+
+def _scale_cover(surface: pygame.Surface,
+                 size: tuple[int, int]) -> pygame.Surface:
+    """等比放大到铺满目标尺寸后居中裁剪，避免直接拉伸变形。"""
+    target_w, target_h = size
+    source_w, source_h = surface.get_size()
+    factor = max(target_w / source_w, target_h / source_h)
+    scaled = pygame.transform.smoothscale(
+        surface, (max(1, round(source_w * factor)), max(1, round(source_h * factor)))
+    )
+    rect = pygame.Rect(0, 0, target_w, target_h)
+    rect.center = scaled.get_rect().center
+    return scaled.subsurface(rect).copy()
+
 
 class GameArt:
-    """Prepared scene backgrounds and masked sprite images."""
+    """整场游戏用到的背景、角色、弹幕与特效贴图。"""
 
     def __init__(self) -> None:
-        root = Path(__file__).resolve().parent.parent / "assets" / "gameplay"
+        sheets: dict[str, pygame.Surface] = {}
+
+        def sheet(name: str) -> pygame.Surface:
+            surface = sheets.get(name)
+            if surface is None:
+                surface = pygame.image.load(str(_ASSET_ROOT / name))
+                sheets[name] = surface
+            return surface
+
+        def frames(image_name: str, mask_name: str,
+                   rects) -> tuple[pygame.Surface, ...]:
+            image = sheet(image_name)
+            mask = sheet(mask_name)
+            return tuple(_compose(image, mask, rect) for rect in rects)
+
+        # ---------------- 场景背景 ----------------
         self.scene_background = pygame.transform.smoothscale(
-            pygame.image.load(str(root / "scarlet-mansion.jpg")),
-            (config.SCREEN_W, config.SCREEN_H),
+            sheet("scarlet-mansion.jpg"), (config.SCREEN_W, config.SCREEN_H)
         )
-        self.playfield_background = pygame.transform.smoothscale(
-            pygame.image.load(str(root / "scarlet-moon.png")),
-            (config.PLAYFIELD_WIDTH, config.PLAYFIELD_HEIGHT),
+        stage_bg = _compose(sheet("stage-bg.png"), sheet("stage-bg-mask.png"),
+                            STAGE_BG_RECT)
+        self.playfield_background = _scale_cover(
+            stage_bg, (config.PLAYFIELD_WIDTH, config.PLAYFIELD_HEIGHT)
+        )
+        self.ending_victory = pygame.transform.smoothscale(
+            sheet("ending-victory.jpg"), (config.SCREEN_W, config.SCREEN_H)
+        )
+        self.ending_defeat = pygame.transform.smoothscale(
+            sheet("ending-defeat.jpg"), (config.SCREEN_W, config.SCREEN_H)
         )
 
-        player_frames = (
-            pygame.Rect(0, 0, 32, 48),
-            pygame.Rect(32, 0, 32, 48),
-        )
+        # ---------------- 自机 ----------------
         self.player_frames = tuple(
-            pygame.transform.smoothscale(
-                self._load_masked(
-                    root / "reimu-sheet.png",
-                    root / "reimu-mask.png",
-                    rect,
-                ),
-                (config.PLAYER_SPRITE_WIDTH, config.PLAYER_SPRITE_HEIGHT),
-            )
-            for rect in player_frames
+            pygame.transform.smoothscale(frame, PLAYER_RENDER_SIZE)
+            for frame in frames("player-sheet.png", "player-mask.png",
+                                PLAYER_FRAME_RECTS["idle"])
+        )
+        self.player_frames_left = tuple(
+            pygame.transform.smoothscale(frame, PLAYER_RENDER_SIZE)
+            for frame in frames("player-sheet.png", "player-mask.png",
+                                PLAYER_FRAME_RECTS["left"])
+        )
+        self.player_frames_right = tuple(
+            pygame.transform.smoothscale(frame, PLAYER_RENDER_SIZE)
+            for frame in frames("player-sheet.png", "player-mask.png",
+                                PLAYER_FRAME_RECTS["right"])
         )
         self.player_icon = pygame.transform.smoothscale(
-            self.player_frames[0], (24, 48)
+            self.player_frames[0], PLAYER_ICON_SIZE
         )
-        self.boss_portrait = pygame.transform.smoothscale(
-            self._load_masked(
-                root / "boss-portrait.png",
-                root / "boss-mask.png",
-                pygame.Rect(12, 5, 236, 251),
-            ),
-            (112, 120),
+
+        # ---------------- 玩家弹与敌方弹幕 ----------------
+        rice = frames("bullet-a-sheet.png", "bullet-a-mask.png", BULLET_RICE_RECTS)
+        self.player_shot = pygame.transform.smoothscale(rice[0], PLAYER_SHOT_RENDER)
+        self.player_shots = tuple(
+            pygame.transform.smoothscale(frame, PLAYER_SHOT_RENDER) for frame in rice
         )
-        self.enemy_bullet_sprites = {
-            config.RED: pygame.transform.smoothscale(
-                self._load_masked(
-                    root / "bullet-sheet.png",
-                    root / "bullet-mask.png",
-                    pygame.Rect(16, 48, 16, 16),
-                ),
-                (18, 18),
-            ),
-            config.CYAN: pygame.transform.smoothscale(
-                self._load_masked(
-                    root / "bullet-sheet.png",
-                    root / "bullet-mask.png",
-                    pygame.Rect(112, 48, 16, 16),
-                ),
-                (18, 18),
-            ),
+
+        self.bullet_rice = tuple(
+            pygame.transform.smoothscale(frame, (22, 42)) for frame in rice
+        )
+        self.bullet_large = {
+            name: pygame.transform.smoothscale(frame, BULLET_LARGE_RENDER)
+            for name, frame in zip(
+                BULLET_LARGE_RECTS,
+                frames("bullet-a-sheet.png", "bullet-a-mask.png",
+                       tuple(BULLET_LARGE_RECTS.values())),
+            )
         }
-        self.player_shot = pygame.transform.smoothscale(
-            self._load_masked(
-                root / "bullet-sheet.png",
-                root / "bullet-mask.png",
-                pygame.Rect(112, 48, 16, 16),
-            ),
-            (12, 26),
+        small = {
+            name: pygame.transform.smoothscale(frame, BULLET_SMALL_RENDER)
+            for name, frame in zip(
+                BULLET_SMALL_RECTS,
+                frames("bullet-b-sheet.png", "bullet-b-mask.png",
+                       tuple(BULLET_SMALL_RECTS.values())),
+            )
+        }
+        self.bullet_small = small
+        self.bullet_mid = {
+            name: pygame.transform.smoothscale(frame, BULLET_MID_RENDER)
+            for name, frame in zip(
+                BULLET_MID_RECTS,
+                frames("bullet-b-sheet.png", "bullet-b-mask.png",
+                       tuple(BULLET_MID_RECTS.values())),
+            )
+        }
+        self.bullet_burst = tuple(
+            pygame.transform.smoothscale(frame, BULLET_BURST_RENDER)
+            for frame in frames("bullet-b-sheet.png", "bullet-b-mask.png",
+                                BULLET_BURST_RECTS)
         )
 
-    @staticmethod
-    def _load_masked(
-            image_path: Path, mask_path: Path,
-            rect: pygame.Rect) -> pygame.Surface:
-        sheet = pygame.image.load(str(image_path))
-        mask_sheet = pygame.image.load(str(mask_path))
-        if sheet.get_size() != mask_sheet.get_size():
-            raise ValueError(f"Artwork and mask dimensions differ: {image_path}")
+        # 主循环按颜色取贴图；青色复用蓝玉贴图，保证旧调用不会回退成红玉。
+        self.enemy_bullet_sprites = {
+            config.WHITE: small["white"],
+            config.RED: small["red"],
+            config.GREEN: small["green"],
+            config.BLUE: small["blue"],
+            config.CYAN: small["blue"],
+        }
 
-        image = sheet.subsurface(rect).copy()
-        mask = mask_sheet.subsurface(rect)
-        result = pygame.Surface(rect.size, pygame.SRCALPHA, 32)
-        for y in range(rect.height):
-            for x in range(rect.width):
-                color = image.get_at((x, y))
-                result.set_at(
-                    (x, y),
-                    (color.r, color.g, color.b, mask.get_at((x, y)).r),
-                )
-        return result
+        # ---------------- 特效与妖精 ----------------
+        effect_sheet = sheet("effect-sheet.png")
+        self.effects = tuple(
+            pygame.transform.smoothscale(
+                effect_sheet.subsurface(rect).copy(), EFFECT_RENDER
+            )
+            for rect in EFFECT_RECTS
+        )
+        self.fairy_frames = tuple(
+            pygame.transform.smoothscale(frame, FAIRY_RENDER)
+            for frame in frames("fairy-sheet.png", "fairy-mask.png", FAIRY_RECTS)
+        )
+
+        # ---------------- Boss 立绘 ----------------
+        self.boss_faces = tuple(
+            pygame.transform.smoothscale(
+                _compose(sheet(image_name), sheet(mask_name), rect),
+                BOSS_FACE_RENDER,
+            )
+            for image_name, mask_name, rect in (
+                ("boss-face-a.png", "boss-face-a-mask.png", BOSS_FACE_RECTS[0]),
+                ("boss-face-b.png", "boss-face-b-mask.png", BOSS_FACE_RECTS[1]),
+                ("boss-face-c.png", "boss-face-c-mask.png", BOSS_FACE_RECTS[2]),
+            )
+        )
+        self.boss_portrait = self.boss_faces[0]
