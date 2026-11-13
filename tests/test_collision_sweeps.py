@@ -21,6 +21,7 @@ class CollisionSweepTests(unittest.TestCase):
         game.lives = config.PLAYER_LIVES
         game.invulnerable_timer = 0.0
         game.game_over = False
+        game.debug_stats = Game._empty_debug_stats()
         return game
 
     def test_swept_graze_crossing_grid_boundary_is_not_filtered(self) -> None:

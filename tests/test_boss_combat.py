@@ -31,6 +31,8 @@ class BossCombatTests(unittest.TestCase):
         game.hit_total = 0
         game.hit_flash = 0.0
         game.animation_timer = 0.0
+        game.debug_overlay = False
+        game.debug_stats = Game._empty_debug_stats()
         game.lives = config.PLAYER_LIVES
         game.invulnerable_timer = 0.0
         game.victory = False

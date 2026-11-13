@@ -16,8 +16,9 @@
 - 使用已获许可的东方红魔乡背景、自机、Boss 立绘和弹幕图片素材。
 - AABB、圆-圆、线段-圆扫掠检测和均匀空间网格工具。
 - 玩家/敌弹和玩家弹/Boss 的相对运动连续碰撞检测。
+- F2 碰撞调试层：空间网格、双层判定圆、敌弹扫掠线段与当帧候选/命中统计。
 
-项目目标是一关一 Boss。分数系统和碰撞调试可视化仍待制作。标题页复用东方红魔乡标题图与 `project-striker` 菜单字图；战斗画面使用用户提供并确认许可的东方红魔乡素材。素材来源和许可说明分别见 `assets/title/ATTRIBUTION.md` 与 `assets/gameplay/ATTRIBUTION.md`。
+项目目标是一关一 Boss。分数系统仍待制作。标题页复用东方红魔乡标题图与 `project-striker` 菜单字图；战斗画面使用用户提供并确认许可的东方红魔乡素材。素材来源和许可说明分别见 `assets/title/ATTRIBUTION.md` 与 `assets/gameplay/ATTRIBUTION.md`。
 
 游戏采用 1280×960 的 4:3 横屏布局，参考 `project-striker` 的画布尺寸与左侧弹幕场、右侧状态栏的布局。
 
@@ -47,6 +48,7 @@ python -m unittest discover -s tests -v
 | Shift | 低速移动，便于躲避弹幕 |
 | Z | 点按单发，按住连续射击 |
 | F1 | 暂停或继续 |
+| F2 | 开关碰撞调试层（默认关闭） |
 | R | 胜利或失败后重新开始 |
 | Enter / Esc | 失败后返回标题页 |
 | Esc | 标题页退出；操作说明页返回；普通战斗中退出 |

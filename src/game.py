@@ -106,6 +106,20 @@ class Game:
             (config.PLAYFIELD_WIDTH, config.PLAYFIELD_HEIGHT), pygame.SRCALPHA
         )
         self.hit_overlay.fill((150, 12, 30, 80))
+        self.debug_overlay = config.DEBUG_OVERLAY_DEFAULT
+        self.debug_stats = self._empty_debug_stats()
+
+    @staticmethod
+    def _empty_debug_stats() -> dict[str, int]:
+        """当帧碰撞统计，供调试层显示；每帧开始时清零。"""
+        return {
+            "candidates": 0,   # 宽相位候选数
+            "sweeps": 0,       # 玩家弹参与扫掠的次数
+            "hits": 0,         # 玩家被命中次数
+            "grazes": 0,       # 本帧新增擦弹次数
+            "boss_sweeps": 0,  # 玩家弹对 Boss 的扫掠次数
+            "boss_hits": 0,    # 玩家弹命中 Boss 次数
+        }
 
     # ------------------------------------------------------------------ #
     # 输入
@@ -157,6 +171,8 @@ class Game:
             self.shoot_requested = True
         elif key == pygame.K_F1:
             self.paused = not self.paused
+        elif key == pygame.K_F2:
+            self.debug_overlay = not self.debug_overlay
 
     def _read_player_input(self) -> tuple[bool, bool]:
         """读取玩家移动、低速和射击输入。"""
@@ -246,6 +262,7 @@ class Game:
             for shot in self.player_shots:
                 if not shot.alive:
                     continue
+                self.debug_stats["boss_sweeps"] += 1
                 x1 = shot.prev_pos.x - self.boss.prev_pos.x
                 y1 = shot.prev_pos.y - self.boss.prev_pos.y
                 x2 = shot.pos.x - self.boss.pos.x
@@ -254,6 +271,7 @@ class Game:
                         x1, y1, x2, y2, 0.0, 0.0,
                         shot.radius + self.boss.radius):
                     shot.alive = False
+                    self.debug_stats["boss_hits"] += 1
                     self.boss.take_damage(shot.damage)
                     if not self.boss.alive:
                         break
@@ -307,10 +325,12 @@ class Game:
         # 将双方本帧位移和实际子弹半径纳入范围，确保扫掠命中的子弹不会被宽相位过滤。
         query_radius = self.player.graze_radius + player_travel + max_bullet_reach
         candidates = self.grid.query(px, py, query_radius)
+        self.debug_stats["candidates"] = len(candidates)
         p0x, p0y = self.player.prev_pos.x, self.player.prev_pos.y
         for b in candidates:
             if not b.alive or self.invulnerable_timer > 0.0:
                 continue
+            self.debug_stats["sweeps"] += 1
 
             # 转为相对运动：子弹上一帧相对玩家上一帧，至本帧相对位置。
             x1, y1 = b.prev_pos.x - p0x, b.prev_pos.y - p0y
@@ -319,6 +339,7 @@ class Game:
             # 先判内层命中区，命中后直接跳过擦弹判定
             if collision.segment_circle(x1, y1, x2, y2, 0.0, 0.0,
                                         self.player.radius + b.radius):
+                self.debug_stats["hits"] += 1
                 self._on_player_hit(b)
                 continue
 
@@ -327,6 +348,7 @@ class Game:
                     x1, y1, x2, y2, 0.0, 0.0,
                     self.player.graze_radius + b.radius):
                 b.grazed = True
+                self.debug_stats["grazes"] += 1
                 self.player.graze_count += 1
                 self.graze_total += 1
 
@@ -360,6 +382,7 @@ class Game:
             return
 
         self.invulnerable_timer = max(0.0, self.invulnerable_timer - dt)
+        self.debug_stats = self._empty_debug_stats()
         self.focus, self.shooting = self._read_player_input()
         self.player.update(dt)
 
@@ -437,6 +460,9 @@ class Game:
             self.hit_overlay.set_alpha(round(90 * self.hit_flash / 0.25))
             self.screen.blit(self.hit_overlay, field_origin)
 
+        if self.debug_overlay:
+            self._draw_debug_overlay()
+
         self._draw_hud()
 
         if self.paused:
@@ -490,6 +516,7 @@ class Game:
             ("Shift", "低速移动，便于躲避弹幕"),
             ("Z", "点按单发，按住连续射击"),
             ("F1", "暂停或继续"),
+            ("F2", "开关碰撞调试层（判定圆、扫掠线、空间网格）"),
             ("R", "胜利或失败后重新开始"),
             ("Enter / Esc", "失败后返回标题页"),
             ("Esc", "战斗时退出游戏"),
@@ -508,6 +535,64 @@ class Game:
         center_x = config.PLAYFIELD_LEFT + config.PLAYFIELD_WIDTH // 2
         rect = surface.get_rect(center=(center_x, y))
         self.screen.blit(surface, rect)
+
+    def _draw_debug_overlay(self) -> None:
+        """绘制碰撞调试层：空间网格、双层判定圆、扫掠线段与擦弹高亮。
+
+        只读取实体状态，不修改位置或半径，因此开启调试不影响玩法结果。
+        """
+        field = pygame.Rect(
+            config.PLAYFIELD_LEFT,
+            config.PLAYFIELD_TOP,
+            config.PLAYFIELD_WIDTH,
+            config.PLAYFIELD_HEIGHT,
+        )
+
+        # 空间网格：与 SpatialGrid 使用的世界坐标对齐（格子以原点为基准）
+        grid = pygame.Surface(field.size, pygame.SRCALPHA)
+        grid_color = (*config.DEBUG_GRID_COLOR, config.DEBUG_GRID_ALPHA)
+        cell = config.GRID_CELL_SIZE
+        x = cell - (config.PLAYFIELD_LEFT % cell)
+        while x < field.width:
+            pygame.draw.line(grid, grid_color, (x, 0), (x, field.height), 1)
+            x += cell
+        y = cell - (config.PLAYFIELD_TOP % cell)
+        while y < field.height:
+            pygame.draw.line(grid, grid_color, (0, y), (field.width, y), 1)
+            y += cell
+        self.screen.blit(grid, field.topleft)
+
+        # 敌弹本帧扫掠线段；已擦弹的子弹加一圈外环
+        for b in self.bullets:
+            pygame.draw.line(
+                self.screen, config.DEBUG_SWEEP_COLOR,
+                (round(b.prev_pos.x), round(b.prev_pos.y)),
+                (round(b.pos.x), round(b.pos.y)), 1,
+            )
+            if b.grazed:
+                pygame.draw.circle(
+                    self.screen, config.DEBUG_GRAZE_COLOR,
+                    (round(b.pos.x), round(b.pos.y)), round(b.radius) + 5, 1,
+                )
+
+        # Boss 命中区
+        if self.boss.alive:
+            pygame.draw.circle(
+                self.screen, config.DEBUG_HIT_COLOR,
+                (round(self.boss.pos.x), round(self.boss.pos.y)),
+                round(self.boss.radius), 1,
+            )
+
+        # 玩家双层判定：外圈擦弹区、内圈命中区
+        center = (round(self.player.pos.x), round(self.player.pos.y))
+        pygame.draw.circle(
+            self.screen, config.DEBUG_GRAZE_COLOR, center,
+            round(self.player.graze_radius), 1,
+        )
+        pygame.draw.circle(
+            self.screen, config.DEBUG_HIT_COLOR, center,
+            max(1, round(self.player.radius)), 0,
+        )
 
     def _draw_hud(self) -> None:
         panel = pygame.Rect(
@@ -605,10 +690,35 @@ class Game:
             (left, divider_y), (right, divider_y), 1,
         )
         self.screen.blit(
-            self.font.render("操  作  /  CONTROL", True, config.PALE_GOLD),
+            self.font.render(
+                "调  试  /  DEBUG" if self.debug_overlay else "操  作  /  CONTROL",
+                True, config.PALE_GOLD,
+            ),
             (left, divider_y + 30),
         )
-        hints = ("方向键 / WASD   移动", "Shift   低速", "Z   射击        F1   暂停")
+        if self.debug_overlay:
+            stats = self.debug_stats
+            debug_rows = (
+                ("候选 / CAND", stats["candidates"]),
+                ("扫掠 / SWEPT", stats["sweeps"]),
+                ("Boss 命中 / HIT", stats["boss_hits"]),
+            )
+            for index, (label, value) in enumerate(debug_rows):
+                y = divider_y + 80 + index * 42
+                self.screen.blit(
+                    self.font.render(label, True, config.MUTED), (left, y)
+                )
+                value_surface = self.font.render(str(value), True, config.WHITE)
+                self.screen.blit(
+                    value_surface, value_surface.get_rect(topright=(right, y))
+                )
+            return
+
+        hints = (
+            "方向键 / WASD   移动",
+            "Shift   低速移动",
+            "Z 射击   F1 暂停   F2 调试",
+        )
         for index, hint in enumerate(hints):
             self.screen.blit(
                 self.font.render(hint, True, config.WHITE),

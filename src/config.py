@@ -69,3 +69,11 @@ BOSS_RING_COUNT = 8
 
 # ---------- 空间网格 ----------
 GRID_CELL_SIZE = 96
+
+# ---------- 碰撞调试可视化 ----------
+DEBUG_OVERLAY_DEFAULT = False   # 启动时是否直接显示调试层
+DEBUG_GRID_COLOR = (62, 78, 96)
+DEBUG_GRID_ALPHA = 80
+DEBUG_HIT_COLOR = (255, 92, 92)      # 命中区（内层，致命）
+DEBUG_GRAZE_COLOR = (120, 196, 255)  # 擦弹区（外层，不致命）
+DEBUG_SWEEP_COLOR = (255, 198, 104)  # 本帧扫掠线段
