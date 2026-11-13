@@ -6,17 +6,19 @@
 
 ## 原作素材与音乐
 
-“非商业”本身不等于可以直接提取和使用原作游戏资源。东方Project使用规定案的公开整理文本注明，二次创作中禁止直接使用原作游戏的图像素材、音乐、文本和程序。本项目用户已确认标题页选用图片的许可覆盖本项目使用；当前实际纳入的图片和来源记录在 `assets/title/ATTRIBUTION.md`。本次没有加入原作音乐。
+“非商业”本身不等于可以直接提取和使用原作游戏资源。东方Project使用规定案的公开整理文本注明，二次创作中禁止直接使用原作游戏的图像素材、音乐、文本和程序。本项目用户已确认标题页、战斗画面与音乐素材的许可均覆盖本项目使用；当前实际纳入的图片和来源记录在 `assets/title/ATTRIBUTION.md`、`assets/gameplay/ATTRIBUTION.md`，音效见 `assets/audio/ATTRIBUTION.md`，背景音乐见 `assets/bgm/ATTRIBUTION.md`。
 
 规则参考：[东方Project使用规定案（含原作素材使用条款）](https://thbwiki.cc/东方Project使用规定案)。这不是法律意见；使用素材时按已确认的许可范围执行并保留来源信息。
 
-当前素材策略：标题页展示东方红魔乡标题图和参考项目菜单字图；战斗画面使用东方红魔乡的背景、自机、Boss 立绘、弹幕、特效与音效素材。新增素材须在 `assets/` 下登记来源、作者和许可范围。
+当前素材策略：标题页展示东方红魔乡标题图和参考项目菜单字图；战斗画面使用东方红魔乡的背景、自机、Boss 立绘、弹幕、特效与音效素材；背景音乐取自用户提供的东方音乐包，由 PC-98 时期原曲转码为 OGG。新增素材须在 `assets/` 下登记来源、作者和许可范围。
 
 ## 当前已接入
 
-战斗图像副本保存在 `assets/gameplay/`：红魔馆场景背景、关卡背景、自机三组动画帧、Boss 三形态立绘、大/中/小三种弹幕、玩家米弹、命中火花/擦弹光环/击破爆散特效，以及装饰用的小妖精帧。图集配套灰度遮罩在运行时按帧恢复透明边缘，来源与许可记录见 `assets/gameplay/ATTRIBUTION.md`。
+战斗图像副本保存在 `assets/gameplay/`：红魔馆场景背景、关卡背景、自机三组动画帧、Boss 三形态立绘、大/中/小三种弹幕、玩家米弹、命中火花/擦弹光环/击破爆散特效，以及两组可击破妖精动画。胜利流程使用红魔乡原作 `ED_DAT/end01.jpg` 作为后记背景、`ED_DAT/staff00.jpg` 作为鸣谢背景，并保留 `TL_DAT/result.jpg` 战绩插图。图集配套灰度遮罩在运行时按帧恢复透明边缘，来源与许可记录见 `assets/gameplay/ATTRIBUTION.md`。掉落道具复用弹型贴图并添加 PWR / PTS / 1UP 标记区分。
 
 音效副本保存在 `assets/audio/`：发射、命中、擦弹、警报、自机死亡、击破、阶段切换与三个菜单音，来源与许可记录见 `assets/audio/ATTRIBUTION.md`。音频加载或音频设备不可用时静默降级，不影响游戏运行。
+
+背景音乐副本保存在 `assets/bgm/`：`title.ogg`（标题页）、`stage.ogg`（关卡战）、`boss.ogg`（Boss 符卡战）、`ending.ogg`（胜利后记与鸣谢）。结局曲选用《东方怪绮谈》FM86 Extra Ending 主题《Peaceful Romancer》，均由用户提供音乐包中的 PC-98 时期原曲经 ffmpeg 转码为 128 kbps OGG，来源与许可记录见 `assets/bgm/ATTRIBUTION.md`。音乐文件缺失或解码失败时静默降级，仅少一段声音。
 
 战斗画布为 1280×960：左侧 768×896 弹幕场、右侧 Boss 与状态栏，参考 `project-striker` 的布局比例。弹幕场由关卡背景、暗红薄罩与径向暗角三层叠加，保证弹幕清晰；实体碰撞仍使用独立的几何半径。
 
@@ -32,7 +34,7 @@
 | 命中/擦弹特效 | 64×64 PNG，2-4 帧 | 可选 | 已接入 `eff00` 的火花、光环与爆散 |
 | 标题/胜负界面装饰 | 1280×960 PNG 或透明装饰层 | 可选 | 标题页与胜负结算均已使用授权图片素材 |
 | 音效 | OGG/WAV，短音效 | 可选 | 已接入 10 个：发射、命中、擦弹、警报、死亡、击破、阶段切换、菜单三音 |
-| 背景音乐 | OGG，循环段 | 可选 | 最后制作或选用许可清楚的素材 |
+| 背景音乐 | OGG，循环段 | 可选 | 已接入 3 首：标题 / 关卡 / Boss，PC-98 东方原曲转码 |
 
 ## 暂定素材目录
 
@@ -49,6 +51,12 @@ assets/
   backgrounds/
   effects/
   audio/
+  bgm/
+    ATTRIBUTION.md
+    title.ogg
+    stage.ogg
+    boss.ogg
+    ending.ogg
 ```
 
 ## 提供素材时请附带
@@ -60,4 +68,4 @@ assets/
 
 ## 当前策略
 
-玩家、Boss、弹幕、特效、妖精与音效均已使用 `assets/gameplay/` 和 `assets/audio/` 中的授权素材；程序绘制仅保留为贴图缺失时的回退。素材来源分别记录在 `assets/title/ATTRIBUTION.md`、`assets/gameplay/ATTRIBUTION.md` 和 `assets/audio/ATTRIBUTION.md`。
+玩家、Boss、弹幕、特效、妖精与音效均已使用 `assets/gameplay/` 和 `assets/audio/` 中的授权素材，背景音乐使用 `assets/bgm/` 中的授权原曲转码；程序绘制仅保留为贴图缺失时的回退。素材来源分别记录在 `assets/title/ATTRIBUTION.md`、`assets/gameplay/ATTRIBUTION.md`、`assets/audio/ATTRIBUTION.md` 和 `assets/bgm/ATTRIBUTION.md`。

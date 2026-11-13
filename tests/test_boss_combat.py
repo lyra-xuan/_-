@@ -36,7 +36,9 @@ class BossCombatTests(unittest.TestCase):
         game.debug_stats = Game._empty_debug_stats()
         game.lives = config.PLAYER_LIVES
         game.invulnerable_timer = 0.0
+        game.god_mode = False
         game.victory = False
+        game.ending_page = 0
         game.game_over = False
         game.running = True
         # 计分与特效：贴图用占位小方块，避免测试里加载整套素材
@@ -45,15 +47,23 @@ class BossCombatTests(unittest.TestCase):
             hit_spark=stub, graze_ring=stub, boss_burst=stub,
             bullet_small={name: stub for name in ("red", "blue", "white")},
             bullet_large={"magenta": stub},
+            item_sprites={kind: stub for kind in config.ITEM_KINDS},
+            item_halo=stub,
         )
         game.audio = SimpleNamespace(  # type: ignore[assignment]
-            play=lambda name: None
+            play=lambda name: None,
+            play_music=lambda name, fade_ms=600: None,
+            stop_music=lambda fade_ms=400: None,
         )
         game.fairies = []
+        game.items = []
         game.fairy_timer = config.FAIRY_SPAWN_MIN
         game.effects = []
         game.score = 0
         game.hiscore = 10 ** 9        # 抬高上限，避免测试写盘
+        game.power = config.PLAYER_POWER_START
+        game.item_total = 0
+        game.spiral_angle = 0.0
         game.phase_timer = config.BOSS_PHASE_TIME_LIMIT
         game.boss_flash = 0.0
         game.graze_fx_cooldown = 0.0
@@ -93,6 +103,15 @@ class BossCombatTests(unittest.TestCase):
         )
         self.assertEqual(game.scene, Game.SCENE_TITLE)
 
+    def test_f3_toggles_god_mode(self) -> None:
+        game = self.make_game()
+
+        self.dispatch_keys(game, pygame.K_F3)
+        self.assertTrue(game.god_mode)
+
+        self.dispatch_keys(game, pygame.K_F3)
+        self.assertFalse(game.god_mode)
+
     def test_title_selection_opens_controls_and_returns(self) -> None:
         game = self.make_game()
         game.scene = Game.SCENE_TITLE
@@ -103,6 +122,80 @@ class BossCombatTests(unittest.TestCase):
         self.dispatch_keys(game, pygame.K_ESCAPE)
         self.assertEqual(game.scene, Game.SCENE_TITLE)
 
+    def test_manual_pages_can_be_flipped_and_reset_on_open(self) -> None:
+        game = self.make_game()
+        game.scene = Game.SCENE_TITLE
+        game.manual_page = 1
+
+        self.dispatch_keys(game, pygame.K_DOWN, pygame.K_RETURN)
+        self.assertEqual(game.scene, Game.SCENE_CONTROLS)
+        self.assertEqual(game.manual_page, 0)   # 打开时回到背景说明页
+
+        self.dispatch_keys(game, pygame.K_RIGHT)
+        self.assertEqual(game.manual_page, 1)   # 用语解说
+
+        self.dispatch_keys(game, pygame.K_RIGHT)
+        self.assertEqual(game.manual_page, 2)   # 操作指南
+
+        self.dispatch_keys(game, pygame.K_RIGHT)
+        self.assertEqual(game.manual_page, 2)   # 末页不再翻动
+
+        self.dispatch_keys(game, pygame.K_LEFT, pygame.K_LEFT)
+        self.assertEqual(game.manual_page, 0)
+
+    def test_manual_pages_cover_story_terms_and_controls(self) -> None:
+        self.assertEqual(Game.MANUAL_PAGES, ("背景说明", "用语解说", "操作指南"))
+
+        terms = {term for term, _ in Game.MANUAL_TERMS}
+        for expected in ("幻想乡", "符卡 · Spell Card", "红符 / 红魔法 / 神枪",
+                         "擦弹 · Graze", "红玉 · POWER", "青玉 · POINT",
+                         "绿玉 · LIFE"):
+            self.assertIn(expected, terms)
+        for _, meaning in Game.MANUAL_TERMS:
+            self.assertTrue(meaning)
+        self.assertTrue(Game.MANUAL_STORY)
+        self.assertTrue(Game.MANUAL_KEYS)
+
+    def test_victory_afterword_and_credits_include_story_and_thanks(self) -> None:
+        self.assertTrue(any("紅霧" in line for line in Game.VICTORY_AFTERWORD))
+        self.assertTrue(any("蕾米莉亞" in line for line in Game.VICTORY_AFTERWORD))
+        credits = " ".join(
+            f"{label} {value}" for label, value in Game.VICTORY_CREDITS
+        )
+        self.assertIn("Peaceful Romancer", credits)
+        self.assertIn("TH06", credits)
+        self.assertIn("lyra", credits)
+        self.assertNotIn("用户提供", credits)
+        self.assertIn("ありがとう", " ".join(Game.VICTORY_THANKS))
+
+    def test_title_info_panel_is_compact_in_the_upper_left(self) -> None:
+        left, top, width, height = Game.TITLE_INFO_PANEL_RECT
+
+        self.assertLess(left, config.SCREEN_W / 4)
+        self.assertLess(top, config.SCREEN_H / 4)
+        self.assertLess(width, 600)
+        self.assertLess(top + height, config.SCREEN_H)
+
+    def test_music_switches_from_title_to_stage_and_then_to_boss(self) -> None:
+        game = self.make_game()
+        played: list[str] = []
+        game.audio = SimpleNamespace(  # type: ignore[assignment]
+            play=lambda name: None,
+            play_music=played.append,
+            stop_music=lambda fade_ms=400: None,
+        )
+
+        game.scene = Game.SCENE_TITLE
+        game._update_music()
+        game.scene = Game.SCENE_PLAYING
+        game._update_music()
+        game.boss.hp = game.boss.max_hp / 4.0     # 进入第三段符卡
+        game._update_music()
+        game.victory = True
+        game._update_music()
+
+        self.assertEqual(played, ["title", "stage", "boss", "ending"])
+
     def test_title_enter_starts_the_boss_fight(self) -> None:
         game = self.make_game()
         game.scene = Game.SCENE_TITLE
@@ -110,6 +203,23 @@ class BossCombatTests(unittest.TestCase):
         self.dispatch_keys(game, pygame.K_RETURN)
 
         self.assertEqual(game.scene, Game.SCENE_PLAYING)
+        self.assertEqual(game.entry_card_timer, Game.ENTRY_CARD_DURATION)
+
+    def test_entry_card_holds_combat_until_it_fades(self) -> None:
+        game = self.make_game()
+        game.entry_card_timer = Game.ENTRY_CARD_DURATION
+        boss_position = game.boss.pos.copy()
+        player_position = game.player.pos.copy()
+        attack_timer = game.boss_attack_timer
+
+        game.update(0.5)
+
+        self.assertAlmostEqual(
+            game.entry_card_timer, Game.ENTRY_CARD_DURATION - 0.5
+        )
+        self.assertEqual(game.boss.pos, boss_position)
+        self.assertEqual(game.player.pos, player_position)
+        self.assertEqual(game.boss_attack_timer, attack_timer)
 
     def test_title_exit_item_and_escape_close_the_game(self) -> None:
         game = self.make_game()
@@ -241,6 +351,20 @@ class BossCombatTests(unittest.TestCase):
         # 阶段 2 是双层环：外圈大玉 + 两倍数量的内圈小玉
         self.assertEqual(len(game.bullets), config.BOSS_RING_COUNT * 3)
 
+    def test_phase_two_rings_spawn_from_the_boss_body_anchor(self) -> None:
+        game = self.make_game()
+        game.boss.take_damage(game.boss.max_hp / 2)
+        origin = game._boss_attack_origin()
+
+        game._spawn_boss_attack()
+
+        self.assertEqual(len(game.bullets), config.BOSS_RING_COUNT * 3)
+        self.assertTrue(all(bullet.pos == origin for bullet in game.bullets))
+        self.assertEqual(
+            origin.y,
+            game.boss.pos.y + config.BOSS_ATTACK_ORIGIN_OFFSET[1],
+        )
+
     def test_phase_one_fan_is_aimed_at_player(self) -> None:
         game = self.make_game()
         game._spawn_boss_attack()
@@ -282,6 +406,7 @@ class BossCombatTests(unittest.TestCase):
         game._check_boss_collisions()
 
         self.assertTrue(game.victory)
+        self.assertEqual(game.ending_page, 0)
         self.assertFalse(game.boss.alive)
         self.assertEqual(game.bullets, [])
         self.assertEqual(game.player_shots, [])
@@ -320,6 +445,19 @@ class BossCombatTests(unittest.TestCase):
         self.assertEqual(game.lives, config.PLAYER_LIVES)
         self.assertEqual(game.hit_total, 0)
         self.assertTrue(bullet.alive)
+
+    def test_god_mode_prevents_bullet_hits_without_spending_lives(self) -> None:
+        game = self.make_game()
+        game.god_mode = True
+        bullet = Bullet(game.player.pos.x, game.player.pos.y, 0, 0)
+        game.bullets = [bullet]
+
+        game._check_collisions()
+
+        self.assertEqual(game.lives, config.PLAYER_LIVES)
+        self.assertEqual(game.hit_total, 0)
+        self.assertTrue(bullet.alive)
+        self.assertFalse(game.game_over)
 
     def test_invulnerability_timer_counts_down_during_play(self) -> None:
         game = self.make_game()
@@ -389,6 +527,35 @@ class BossCombatTests(unittest.TestCase):
                 self.assertFalse(game.game_over)
                 self.assertTrue(game.running)
 
+    def test_victory_pages_can_be_read_then_closed(self) -> None:
+        game = self.make_game()
+        game.victory = True
+
+        self.dispatch_keys(game, pygame.K_RETURN)
+        self.assertEqual(game.ending_page, 1)
+        self.assertEqual(game.scene, Game.SCENE_PLAYING)
+        self.dispatch_keys(game, pygame.K_RIGHT)
+        self.assertEqual(game.ending_page, 2)
+        self.dispatch_keys(game, pygame.K_LEFT)
+        self.assertEqual(game.ending_page, 1)
+        self.dispatch_keys(game, pygame.K_RETURN)
+        self.assertEqual(game.ending_page, 2)
+
+        self.dispatch_keys(game, pygame.K_RETURN)
+        self.assertEqual(game.scene, Game.SCENE_TITLE)
+        self.assertFalse(game.victory)
+        self.assertTrue(game.running)
+
+    def test_victory_escape_returns_to_title_from_any_page(self) -> None:
+        game = self.make_game()
+        game.victory = True
+        game.ending_page = 1
+
+        self.dispatch_keys(game, pygame.K_ESCAPE)
+
+        self.assertEqual(game.scene, Game.SCENE_TITLE)
+        self.assertFalse(game.victory)
+
     def test_reset_run_restores_clean_boss_encounter(self) -> None:
         game = self.make_game()
         game.boss.take_damage(game.boss.max_hp)
@@ -396,6 +563,7 @@ class BossCombatTests(unittest.TestCase):
         game.player_shots.append(PlayerShot(100, 100))
         game.paused = True
         game.victory = True
+        game.ending_page = 2
         game.graze_total = 4
         game.hit_total = 2
         game.hit_flash = 0.2
@@ -414,6 +582,7 @@ class BossCombatTests(unittest.TestCase):
         self.assertEqual(game.player_shots, [])
         self.assertFalse(game.paused)
         self.assertFalse(game.victory)
+        self.assertEqual(game.ending_page, 0)
         self.assertFalse(game.game_over)
         self.assertEqual(game.lives, config.PLAYER_LIVES)
         self.assertEqual(game.invulnerable_timer, 0.0)
@@ -422,6 +591,7 @@ class BossCombatTests(unittest.TestCase):
         self.assertEqual(game.hit_flash, 0.0)
         self.assertEqual(game.fire_timer, 0.0)
         self.assertEqual(game.boss_attack_timer, config.BOSS_PHASE1_INTERVAL)
+        self.assertEqual(game.entry_card_timer, Game.ENTRY_CARD_DURATION)
 
 
 if __name__ == "__main__":

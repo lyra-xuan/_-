@@ -4,7 +4,7 @@ import unittest
 import pygame
 
 from src import config
-from src.audio import Audio
+from src.audio import _BGM_ROOT, _MUSIC_FILES, Audio
 from src.entities import Fairy
 from src.game import Game
 
@@ -61,6 +61,33 @@ class AudioTests(unittest.TestCase):
         audio = Audio()
 
         audio.play("does-not-exist")   # 不应抛异常
+
+    def test_bundled_background_music_files_are_present(self) -> None:
+        for name in ("title", "stage", "boss", "ending"):
+            self.assertTrue((_BGM_ROOT / _MUSIC_FILES[name]).is_file(), name)
+
+    def test_missing_music_degrades_silently(self) -> None:
+        audio = Audio()
+        audio.music_ready = True
+
+        audio.play_music("does-not-exist")
+
+        self.assertIsNone(audio.current_music)
+
+    def test_playing_the_same_track_twice_does_not_restart_it(self) -> None:
+        audio = Audio()
+        audio.music_ready = True
+        audio.current_music = "stage"
+
+        audio.play_music("stage")
+
+        self.assertEqual(audio.current_music, "stage")
+
+    def test_stop_music_is_safe_without_a_device(self) -> None:
+        audio = Audio()
+        audio.stop_music()
+
+        self.assertIsNone(audio.current_music)
 
 
 if __name__ == "__main__":

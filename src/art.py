@@ -57,6 +57,10 @@ BULLET_MID_RECTS = {
 }
 BULLET_MID_RENDER = (26, 26)
 
+# 掉落道具：复用原作弹型贴图，并叠加短标签，避免小尺寸下只像普通弹珠
+ITEM_RENDER = (38, 38)
+ITEM_LABELS = {"power": "PWR", "point": "PTS", "life": "1UP"}
+
 # 特效（eff00，自带 alpha，无需遮罩）。
 EFFECT_SPARK_RECT = (1, 1, 30, 30)      # 命中火花
 EFFECT_RING_RECT = (49, 49, 15, 14)     # 擦弹光环
@@ -68,6 +72,11 @@ EFFECT_BURST_SIZE = (168, 174)
 # 妖精（stg1enm）：8 列网格，左上 4 帧为小型妖精。
 FAIRY_RECTS = ((5, 5, 23, 24), (35, 5, 26, 24), (69, 5, 24, 24), (101, 5, 24, 24))
 FAIRY_RENDER = (40, 42)
+FAIRY_VARIANT_RECTS = (
+    (1, 2, 31, 45), (33, 2, 30, 45), (65, 2, 30, 45),
+    (97, 2, 30, 45), (129, 2, 30, 45),
+)
+FAIRY_VARIANT_RENDER = (38, 52)
 
 # Boss 立绘（face12a / face12c / face10a）。
 BOSS_FACE_RECTS = ((4, 0, 252, 256), (4, 0, 248, 256), (0, 0, 256, 256))
@@ -145,6 +154,15 @@ class GameArt:
         self.ending_defeat = pygame.transform.smoothscale(
             sheet("ending-defeat.jpg"), (config.SCREEN_W, config.SCREEN_H)
         )
+        self.ending_afterword = pygame.transform.smoothscale(
+            sheet("ending-afterword.jpg"), (config.SCREEN_W, config.SCREEN_H)
+        )
+        self.ending_credits = pygame.transform.smoothscale(
+            sheet("ending-credits.jpg"), (config.SCREEN_W, config.SCREEN_H)
+        )
+        self.result_screen = pygame.transform.smoothscale(
+            sheet("result-screen.jpg"), (360, 270)
+        )
 
         # ---------------- 自机 ----------------
         self.player_frames = tuple(
@@ -214,6 +232,48 @@ class GameArt:
             pygame.transform.smoothscale(frame, FAIRY_RENDER)
             for frame in frames("fairy-sheet.png", "fairy-mask.png", FAIRY_RECTS)
         )
+        self.fairy_variant_frames = tuple(
+            pygame.transform.smoothscale(frame, FAIRY_VARIANT_RENDER)
+            for frame in frames(
+                "fairy-variant-sheet.png", "fairy-variant-mask.png",
+                FAIRY_VARIANT_RECTS,
+            )
+        )
+
+        # ---------------- 掉落道具 ----------------
+        # 保留原作弹型图案，以红/青/绿区分类别；标签给出道具用途缩写。
+        item_sources = {
+            "power": pygame.transform.smoothscale(
+                self.bullet_mid["red"], ITEM_RENDER
+            ),
+            "point": pygame.transform.smoothscale(
+                self.bullet_large["cyan"], ITEM_RENDER
+            ),
+            "life": pygame.transform.smoothscale(
+                self.bullet_mid["green"], ITEM_RENDER
+            ),
+        }
+        if not pygame.font.get_init():
+            pygame.font.init()
+        label_font = pygame.font.Font(None, 13)
+        self.item_sprites = {}
+        for kind, sprite in item_sources.items():
+            sprite = sprite.copy()
+            label = label_font.render(ITEM_LABELS[kind], True, config.WHITE)
+            badge = pygame.Surface(
+                (label.get_width() + 6, label.get_height() + 4), pygame.SRCALPHA
+            )
+            pygame.draw.rect(
+                badge, (12, 5, 10, 230), badge.get_rect(), border_radius=3
+            )
+            pygame.draw.rect(
+                badge, config.ITEM_KIND_COLORS[kind], badge.get_rect(), 1,
+                border_radius=3,
+            )
+            badge.blit(label, label.get_rect(center=badge.get_rect().center))
+            sprite.blit(badge, badge.get_rect(center=sprite.get_rect().center))
+            self.item_sprites[kind] = sprite
+        self.item_halo = self.graze_ring
 
         # ---------------- Boss 立绘 ----------------
         self.boss_faces = tuple(

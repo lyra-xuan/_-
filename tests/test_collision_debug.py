@@ -41,16 +41,24 @@ class CollisionDebugTests(unittest.TestCase):
         game.running = True
         stub = pygame.Surface((8, 8), pygame.SRCALPHA)
         game.art = SimpleNamespace(  # type: ignore[assignment]
-            hit_spark=stub, graze_ring=stub, boss_burst=stub
+            hit_spark=stub, graze_ring=stub, boss_burst=stub,
+            item_sprites={kind: stub for kind in config.ITEM_KINDS},
+            item_halo=stub,
         )
         game.audio = SimpleNamespace(  # type: ignore[assignment]
-            play=lambda name: None
+            play=lambda name: None,
+            play_music=lambda name, fade_ms=600: None,
+            stop_music=lambda fade_ms=400: None,
         )
         game.fairies = []
+        game.items = []
         game.fairy_timer = config.FAIRY_SPAWN_MIN
         game.effects = []
         game.score = 0
         game.hiscore = 10 ** 9
+        game.power = config.PLAYER_POWER_START
+        game.item_total = 0
+        game.spiral_angle = 0.0
         game.phase_timer = config.BOSS_PHASE_TIME_LIMIT
         game.boss_flash = 0.0
         game.graze_fx_cooldown = 0.0

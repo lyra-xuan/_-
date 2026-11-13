@@ -18,11 +18,16 @@ Images (`CM_DAT` = character/bullet data, `ST_DAT` = stage data,
 - `effect-sheet.png`: `CM_DAT/eff00.png` (already alpha-encoded)
 - `stage-bg.png` / `stage-bg-mask.png`: `ST_DAT/stg4bg.png` / `stg4bg_a.png`
 - `fairy-sheet.png` / `fairy-mask.png`: `ST_DAT/stg1enm.png` / `stg1enm_a.png`
+- `fairy-variant-sheet.png` / `fairy-variant-mask.png`:
+  `ST_DAT/stg1enm2.png` / `stg1enm2_a.png` (alternate fairy sprite animation)
 - `boss-face-a.png` / `boss-face-a-mask.png`: `ST_DAT/face12a.png` / `face12a_a.png`
 - `boss-face-b.png` / `boss-face-b-mask.png`: `ST_DAT/face12c.png` / `face12c_a.png`
 - `boss-face-c.png` / `boss-face-c-mask.png`: `ST_DAT/face10a.png` / `face10a_a.png`
 - `ending-victory.jpg`: `ED_DAT/end03.jpg`
 - `ending-defeat.jpg`: `ED_DAT/end00.jpg`
+- `ending-afterword.jpg`: `ED_DAT/end01.jpg` (original ending-scene illustration)
+- `ending-credits.jpg`: `ED_DAT/staff00.jpg` (original staff-roll background)
+- `result-screen.jpg`: `TL_DAT/result.jpg` (original score/result screen artwork)
 
 Sound effects live in `../audio/` and come from `IN_DAT` (see the credits file
 there). Original Touhou Project artwork and audio are copyright © ZUN. The user

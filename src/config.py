@@ -41,6 +41,8 @@ PLAYER_START_Y = PLAYFIELD_BOTTOM - 120
 # ---------- 玩家 ----------
 PLAYER_SPEED = 560.0        # 像素/秒
 PLAYER_FOCUS_FACTOR = 0.45  # 按住 Shift 低速移动时的速度系数
+PLAYER_POWER_START = 1.00   # 初始火力：1.00 单发
+PLAYER_POWER_DOUBLE = 2.00  # 达到该火力后双发，满火力（ITEM_POWER_MAX）四发
 PLAYER_HIT_RADIUS = 4.5     # 命中判定半径（弹幕游戏惯例：极小）
 PLAYER_GRAZE_RADIUS = 27.0  # 擦弹判定半径（外层）
 PLAYER_START_MARGIN = 120.0
@@ -63,19 +65,28 @@ BULLET_LARGE_RADIUS = 13.0
 BOSS_START_X = PLAYER_START_X
 BOSS_START_Y = PLAYFIELD_TOP + 148.0
 BOSS_RADIUS = 42.0
-BOSS_MAX_HP = 180.0
+BOSS_ATTACK_ORIGIN_OFFSET = (0.0, 38.0)  # 从立绘中心下移至身体，避免弹幕从脸部发射
+# 三段符卡，每段 180 点生命，与原先两段单段血量保持一致
+BOSS_MAX_HP = 540.0
 BOSS_MOVE_SPEED = 240.0
 BOSS_LEFT_BOUND = PLAYFIELD_LEFT + 128.0
 BOSS_RIGHT_BOUND = PLAYFIELD_RIGHT - 128.0
 BOSS_PHASE1_INTERVAL = 0.85
 BOSS_PHASE2_INTERVAL = 0.60
+BOSS_PHASE3_INTERVAL = 0.42
 BOSS_ATTACK_SPEED = 232.5
 BOSS_FAN_COUNT = 5
 BOSS_FAN_STEP_DEGREES = 12.0
 BOSS_RING_COUNT = 8
+BOSS_SPIRAL_ARMS = 6            # 阶段 3 旋转螺旋的弹臂数
+BOSS_SPIRAL_STEP_DEGREES = 17.0  # 每次发射螺旋整体旋转的角度
+BOSS_SCATTER_COUNT = 4          # 阶段 3 每次额外散射的子弹数
+BOSS_SCATTER_SPEED_MIN = 120.0
+BOSS_SCATTER_SPEED_MAX = 240.0
 BOSS_PHASE_TIME_LIMIT = 45.0  # 每个阶段的符卡限时（秒），超时强制推进下一阶段
+BOSS_PHASE_DROP_POWER = 6     # 每次进入新阶段时掉落的火力道具数
 # 各阶段的符卡名，展示在弹幕场顶部；元素数即 Boss 的总段数
-BOSS_PHASE_NAMES = ("红符「猩红射击」", "红魔法「红色魔术」")
+BOSS_PHASE_NAMES = ("红符「猩红射击」", "红魔法「红色魔术」", "神枪「冈格尼尔之枪」")
 
 # ---------- 计分 ----------
 GRAZE_SCORE = 500       # 每次擦弹
@@ -93,13 +104,36 @@ BOSS_FLASH_DURATION = 0.16
 VIGNETTE_COLOR = (10, 3, 9)
 VIGNETTE_MAX_ALPHA = 205
 
+# ---------- 掉落道具 ----------
+ITEM_RADIUS = 16.0          # 拾取判定半径
+ITEM_FALL_SPEED = 120.0     # 匀速下落速度（像素/秒）
+ITEM_MAGNET_RADIUS = 120.0  # 自机吸附范围
+ITEM_MAGNET_SPEED = 560.0   # 吸附时的收拢速度
+ITEM_POWER_MAX = 4.00       # 火力上限
+ITEM_POWER_GAIN = 0.05      # 每枚 Power 道具增加的火力
+ITEM_POINT_SCORE = 500      # 每枚 Point 道具的得分
+ITEM_POWER_FULL_SCORE = 1000  # 满火力时拾取 Power 折算的分数
+# 道具种类 -> 素材名；素材复用现有弹型贴图（红=火力，青=点数，绿=1UP）
+ITEM_KINDS = ("power", "point", "life")
+ITEM_KIND_COLORS = {
+    "power": RED,
+    "point": CYAN,
+    "life": GREEN,
+}
+
 # ---------- 装饰妖精 ----------
+FAIRY_HP = 20.0            # 击破所需的伤害
+FAIRY_RADIUS = 22.0        # 命中判定半径
+FAIRY_POINT_DROPS = 1      # 每只击破妖精掉落的道具数
 FAIRY_SPAWN_MIN = 1.1      # 两次生成之间的最短间隔（秒）
 FAIRY_SPAWN_MAX = 2.4
 FAIRY_SPEED_MIN = 40.0     # 下落速度范围（像素/秒）
 FAIRY_SPEED_MAX = 78.0
 FAIRY_SWAY_MIN = 18.0      # 左右摆动幅度范围（像素/秒）
 FAIRY_SWAY_MAX = 46.0
+FAIRY_DROP_PATTERN = ("point", "power", "point")
+FAIRY_LIFE_DROP_CHANCE = 0.035
+FAIRY_VARIANT_CHANCE = 0.30
 
 # ---------- 空间网格 ----------
 GRID_CELL_SIZE = 96

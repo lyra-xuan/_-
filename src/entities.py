@@ -177,7 +177,12 @@ class Boss(Entity):
 
     @property
     def phase(self) -> int:
-        return 2 if self.hp <= self.max_hp / 2 else 1
+        """按剩余生命值把整场战斗切成三段符卡。"""
+        if self.hp <= self.max_hp / 3.0:
+            return 3
+        if self.hp <= self.max_hp * 2.0 / 3.0:
+            return 2
+        return 1
 
     def take_damage(self, amount: float) -> None:
         self.hp = max(0.0, self.hp - max(0.0, amount))
@@ -209,21 +214,36 @@ class Boss(Entity):
 
 
 class Fairy(Entity):
-    """装饰性小妖精：从场地上方飘落，左右轻微摆动，不参与碰撞。
+    """小妖精：从场地上方飘落，左右轻微摆动，可被玩家弹击破。
 
-    只提供视觉点缀，因此没有命中半径，出屏即回收。
+    被击破时由 ``Game`` 结算分数并掉落道具；出屏后自动回收。
     """
 
-    def __init__(self, x: float, y: float, speed: float, sway: float) -> None:
+    def __init__(
+        self, x: float, y: float, speed: float, sway: float,
+        variant: bool = False,
+    ) -> None:
         super().__init__(x, y)
+        self.prev_pos = Vector2(self.pos)
+        self.radius = config.FAIRY_RADIUS
+        self.max_hp = config.FAIRY_HP
+        self.hp = self.max_hp
         self.speed = speed
         self.sway = sway
+        self.variant = variant
         self.phase = 0.0
         self.timer = 0.0
+        self.hit_flash = 0.0        # 受击闪白计时
+
+    def take_damage(self, amount: float) -> None:
+        self.hp = max(0.0, self.hp - max(0.0, amount))
+        self.alive = self.hp > 0.0
 
     def update(self, dt: float) -> None:
+        self.prev_pos = Vector2(self.pos)
         self.timer += dt
         self.phase += dt
+        self.hit_flash = max(0.0, self.hit_flash - dt)
         self.pos.y += self.speed * dt
         self.pos.x += math.sin(self.phase * 1.6) * self.sway * dt
         if self.pos.y > config.PLAYFIELD_BOTTOM + 60:
@@ -231,11 +251,59 @@ class Fairy(Entity):
 
     def draw(
             self, surface: pygame.Surface,
-            frames: tuple[pygame.Surface, ...] | None = None) -> None:
+            frames: tuple[pygame.Surface, ...] | None = None,
+            flash: float = 0.0) -> None:
         if not frames:
             return
         image = frames[int(self.timer * 6) % len(frames)]
+        if flash > 0.0:
+            image = image.copy()
+            value = max(0, min(255, round(255 * flash)))
+            image.fill((value, value, value, 0),
+                       special_flags=pygame.BLEND_RGBA_ADD)
         surface.blit(image, image.get_rect(center=self.pos))
+
+
+class Item(Entity):
+    """掉落道具：匀速下落，进入自机吸附范围后被磁吸，出屏回收。
+
+    ``kind`` 取 ``config.ITEM_KINDS``（power / point / life），决定外观与
+    拾取效果；本实体只负责运动与回收，效果由 ``Game`` 处理。
+    """
+
+    def __init__(self, x: float, y: float, kind: str,
+                 sprite: pygame.Surface | None = None) -> None:
+        super().__init__(x, y)
+        self.kind = kind
+        self.radius = config.ITEM_RADIUS
+        self.vel = Vector2(0.0, config.ITEM_FALL_SPEED)
+        self.sprite = sprite
+        self.timer = 0.0
+
+    def update(self, dt: float) -> None:
+        """按 ``vel`` 移动；磁吸方向由 ``Game`` 每帧写入。"""
+        self.timer += dt
+        super().update(dt)
+        if self.pos.y > config.PLAYFIELD_BOTTOM + 40.0:
+            self.alive = False
+
+    def draw(
+            self, surface: pygame.Surface,
+            halo: pygame.Surface | None = None) -> None:
+        # 光环随计时器脉动透明度，把道具与普通子弹区分开
+        if halo is not None:
+            frame = halo.copy()
+            frame.set_alpha(
+                round(120 + 90 * (0.5 + 0.5 * math.sin(self.timer * 7.0)))
+            )
+            surface.blit(frame, frame.get_rect(center=self.pos))
+        if self.sprite is not None:
+            surface.blit(self.sprite, self.sprite.get_rect(center=self.pos))
+            return
+        pygame.draw.circle(
+            surface, config.ITEM_KIND_COLORS.get(self.kind, config.WHITE),
+            (round(self.pos.x), round(self.pos.y)), max(1, round(self.radius)),
+        )
 
 
 class Effect:
