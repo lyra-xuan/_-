@@ -13,7 +13,7 @@ from pygame.math import Vector2
 
 from . import config, collision
 from .art import GameArt
-from .entities import Boss, Bullet, Player, PlayerShot
+from .entities import Boss, Bullet, Effect, Player, PlayerShot
 
 
 def _load_font(size: int) -> pygame.font.Font:
@@ -23,6 +23,52 @@ def _load_font(size: int) -> pygame.font.Font:
         if path:
             return pygame.font.Font(path, size)
     return pygame.font.Font(None, size)
+
+
+def _build_vignette(size: tuple[int, int]) -> pygame.Surface:
+    """生成径向暗角：中心透明、边缘压暗，把视线收拢到弹幕场中央。
+
+    从最大半径往中心逐层绘制更小、更透明的圆，后画的盖住先画的。
+    """
+    width, height = size
+    overlay = pygame.Surface(size, pygame.SRCALPHA)
+    center = (width // 2, height // 2)
+    max_radius = math.hypot(width, height) / 2
+    steps = 64
+    for step in range(steps):
+        ratio = step / steps
+        radius = max_radius * (1.0 - ratio)
+        alpha = int(config.VIGNETTE_MAX_ALPHA * (1.0 - ratio) ** 2)
+        pygame.draw.circle(
+            overlay, (*config.VIGNETTE_COLOR, alpha), center, int(radius)
+        )
+    return overlay
+
+
+def _flash_sprite(sprite: pygame.Surface, amount: float) -> pygame.Surface:
+    """把贴图整体加亮，用于 Boss 受击闪白；alpha 通道保持不变。"""
+    frame = sprite.copy()
+    value = max(0, min(255, round(255 * amount)))
+    frame.fill((value, value, value, 0), special_flags=pygame.BLEND_RGBA_ADD)
+    return frame
+
+
+def _hiscore_path() -> Path:
+    return Path(__file__).resolve().parent.parent / config.HISCORE_FILE
+
+
+def _load_hiscore() -> int:
+    try:
+        return max(0, int(_hiscore_path().read_text(encoding="utf-8").strip()))
+    except (OSError, ValueError):
+        return 0
+
+
+def _save_hiscore(value: int) -> None:
+    try:
+        _hiscore_path().write_text(str(value), encoding="utf-8")
+    except OSError:
+        pass       # 无写权限时静默忽略，不影响游戏
 
 
 class Game:
@@ -53,6 +99,10 @@ class Game:
             (config.SCREEN_W, config.SCREEN_H), pygame.SRCALPHA
         )
         self.title_shade.fill((7, 3, 9, 112))
+        self.ending_shade = pygame.Surface(
+            (config.SCREEN_W, config.SCREEN_H), pygame.SRCALPHA
+        )
+        self.ending_shade.fill((7, 3, 9, 168))
 
         menu_atlas = pygame.image.load(str(asset_dir / "project-striker-menu.webp"))
         self.title_menu_images = tuple(
@@ -108,6 +158,17 @@ class Game:
         self.hit_overlay.fill((150, 12, 30, 80))
         self.debug_overlay = config.DEBUG_OVERLAY_DEFAULT
         self.debug_stats = self._empty_debug_stats()
+
+        # 计分与战斗节奏
+        self.score = 0
+        self.hiscore = _load_hiscore()
+        self.effects: list[Effect] = []
+        self.phase_timer = config.BOSS_PHASE_TIME_LIMIT
+        self.boss_flash = 0.0            # Boss 受击闪白计时
+        self.graze_fx_cooldown = 0.0     # 擦弹特效的节流，避免刷屏
+        self.field_vignette = _build_vignette(
+            (config.PLAYFIELD_WIDTH, config.PLAYFIELD_HEIGHT)
+        )
 
     @staticmethod
     def _empty_debug_stats() -> dict[str, int]:
@@ -208,7 +269,8 @@ class Game:
             self.fire_timer = config.PLAYER_FIRE_INTERVAL
 
     def _spawn_boss_attack(self) -> None:
-        """按 Boss 阶段发射扇形瞄准弹或八方向环形弹。"""
+        """按 Boss 阶段发射扇形瞄准弹或环形混合弹幕。"""
+        art = self.art
         if self.boss.phase == 1:
             direction = self.player.pos - self.boss.pos
             if direction.length_squared() == 0:
@@ -218,16 +280,19 @@ class Game:
             for i in range(config.BOSS_FAN_COUNT):
                 offset = (i - middle) * math.radians(config.BOSS_FAN_STEP_DEGREES)
                 angle = base_angle + offset
-                color = config.CYAN if i % 2 else config.RED
+                cyan_side = i % 2 == 1
                 self.bullets.append(Bullet(
                     self.boss.pos.x,
                     self.boss.pos.y,
                     math.cos(angle) * config.BOSS_ATTACK_SPEED,
                     math.sin(angle) * config.BOSS_ATTACK_SPEED,
-                    color=color,
+                    radius=config.BULLET_SMALL_RADIUS,
+                    color=config.CYAN if cyan_side else config.RED,
+                    sprite=art.bullet_small["blue" if cyan_side else "red"],
                 ))
             return
 
+        # 阶段 2：外圈大玉 + 内圈交错的小玉，形成双层环形弹幕
         for i in range(config.BOSS_RING_COUNT):
             angle = math.tau * i / config.BOSS_RING_COUNT
             self.bullets.append(Bullet(
@@ -235,10 +300,27 @@ class Game:
                 self.boss.pos.y,
                 math.cos(angle) * config.BOSS_ATTACK_SPEED,
                 math.sin(angle) * config.BOSS_ATTACK_SPEED,
-                color=config.CYAN if i % 2 else config.RED,
+                radius=config.BULLET_LARGE_RADIUS,
+                color=config.MAGENTA,
+                sprite=art.bullet_large["magenta"],
+            ))
+
+        small_count = config.BOSS_RING_COUNT * 2
+        for i in range(small_count):
+            angle = math.tau * i / small_count + math.pi / small_count
+            speed = config.BOSS_ATTACK_SPEED * 0.72
+            self.bullets.append(Bullet(
+                self.boss.pos.x,
+                self.boss.pos.y,
+                math.cos(angle) * speed,
+                math.sin(angle) * speed,
+                radius=config.BULLET_SMALL_RADIUS,
+                color=config.WHITE,
+                sprite=art.bullet_small["white"],
             ))
 
     def _update_boss_attacks(self, dt: float) -> None:
+        """按阶段发射弹幕；符卡限时耗尽则强制推进到下一阶段。"""
         if not self.boss.alive:
             return
 
@@ -248,6 +330,14 @@ class Game:
         if phase != self.boss_attack_phase:
             self.boss_attack_phase = phase
             self.boss_attack_timer = interval
+            self.phase_timer = config.BOSS_PHASE_TIME_LIMIT
+            if phase > 1:
+                self.score += config.PHASE_SCORE
+
+        self.phase_timer = max(0.0, self.phase_timer - dt)
+        if self.phase_timer <= 0.0:
+            self._force_phase_end()
+            return
 
         self.boss_attack_timer -= dt
         if self.boss_attack_timer > 0.0:
@@ -255,6 +345,19 @@ class Game:
 
         self._spawn_boss_attack()
         self.boss_attack_timer = interval
+
+    def _force_phase_end(self) -> None:
+        """符卡倒计时归零：把当前阶段直接推到尽头。
+
+        阶段 1 超时进入阶段 2，阶段 2 超时视为 Boss 被击破，与原作
+        「符卡时间到即结束该符卡」的处理一致。
+        """
+        if self.boss.phase == 1:
+            self.boss.hp = min(self.boss.hp, self.boss.max_hp / 2.0 - 1.0)
+            self.phase_timer = config.BOSS_PHASE_TIME_LIMIT
+        else:
+            self.boss.hp = 0.0
+            self.boss.alive = False
 
     def _check_boss_collisions(self) -> None:
         """用相对运动线段检测玩家弹与移动 Boss 的碰撞。"""
@@ -273,14 +376,36 @@ class Game:
                     shot.alive = False
                     self.debug_stats["boss_hits"] += 1
                     self.boss.take_damage(shot.damage)
+                    self.boss_flash = config.BOSS_FLASH_DURATION
+                    self.effects.append(Effect(
+                        shot.pos.x, shot.pos.y, self.art.hit_spark,
+                        config.HIT_SPARK_DURATION, start_scale=0.7,
+                        end_scale=1.1,
+                    ))
                     if not self.boss.alive:
                         break
 
         self.player_shots = [shot for shot in self.player_shots if shot.alive]
         if not self.boss.alive:
-            self.victory = True
-            self.bullets.clear()
-            self.player_shots.clear()
+            self._on_boss_defeated()
+
+    def _on_boss_defeated(self) -> None:
+        """击破 Boss：结算分数、播放大爆特效并清空弹幕。"""
+        self.score += config.VICTORY_SCORE
+        self._register_hiscore()
+        self.effects.append(Effect(
+            self.boss.pos.x, self.boss.pos.y, self.art.boss_burst,
+            config.BURST_DURATION, start_scale=0.4, end_scale=1.3,
+        ))
+        self.victory = True
+        self.bullets.clear()
+        self.player_shots.clear()
+
+    def _register_hiscore(self) -> None:
+        """刷新并持久化最高分（无写权限时静默忽略）。"""
+        if self.score > self.hiscore:
+            self.hiscore = self.score
+            _save_hiscore(self.hiscore)
 
     def _reset_run(self) -> None:
         """重置玩家、Boss、弹幕、计时器与本局统计。"""
@@ -297,6 +422,11 @@ class Game:
         self.graze_total = 0
         self.hit_total = 0
         self.hit_flash = 0.0
+        self.score = 0                 # 单局分数重置，最高分保留
+        self.effects.clear()
+        self.phase_timer = config.BOSS_PHASE_TIME_LIMIT
+        self.boss_flash = 0.0
+        self.graze_fx_cooldown = 0.0
         self.lives = config.PLAYER_LIVES
         self.invulnerable_timer = 0.0
         self.focus = False
@@ -351,6 +481,15 @@ class Game:
                 self.debug_stats["grazes"] += 1
                 self.player.graze_count += 1
                 self.graze_total += 1
+                self.score += config.GRAZE_SCORE
+                # 擦弹星环按冷却节流，避免密集弹幕下特效刷屏
+                if self.graze_fx_cooldown <= 0.0:
+                    self.effects.append(Effect(
+                        self.player.pos.x, self.player.pos.y,
+                        self.art.graze_ring, config.GRAZE_RING_DURATION,
+                        start_scale=0.6, end_scale=1.5,
+                    ))
+                    self.graze_fx_cooldown = 0.06
 
     def _on_player_hit(self, bullet: Bullet) -> None:
         if self.invulnerable_timer > 0.0 or self.game_over:
@@ -361,6 +500,11 @@ class Game:
         self.hit_flash = 0.25
         self.lives -= 1
         self.bullets.clear()
+        self.effects.append(Effect(
+            self.player.pos.x, self.player.pos.y, self.art.boss_burst,
+            config.BURST_DURATION, start_scale=0.22, end_scale=0.65,
+            start_alpha=190, end_alpha=0,
+        ))
         self.player.pos = Vector2(config.PLAYER_START_X, config.PLAYER_START_Y)
         self.player.prev_pos = Vector2(self.player.pos)
         self.player.graze_count = 0
@@ -374,14 +518,29 @@ class Game:
         else:
             self.invulnerable_timer = config.PLAYER_INVULNERABLE_TIME
 
+    def _advance_effects(self, dt: float) -> None:
+        """推进所有一次性特效，并回收播完的实例。"""
+        for effect in self.effects:
+            effect.update(dt)
+        self.effects = [effect for effect in self.effects if effect.alive]
+
     def update(self, dt: float) -> None:
         if self.scene != self.SCENE_PLAYING:
             return
-        if self.paused or self.victory or self.game_over:
+        if self.paused:
             self.shoot_requested = False
             return
+        if self.victory or self.game_over:
+            # 结算画面仍需让特效播完、红屏闪烁淡出
+            self.shoot_requested = False
+            self._advance_effects(dt)
+            self.hit_flash = max(0.0, self.hit_flash - dt)
+            return
 
+        self._advance_effects(dt)
         self.invulnerable_timer = max(0.0, self.invulnerable_timer - dt)
+        self.boss_flash = max(0.0, self.boss_flash - dt)
+        self.graze_fx_cooldown = max(0.0, self.graze_fx_cooldown - dt)
         self.debug_stats = self._empty_debug_stats()
         self.focus, self.shooting = self._read_player_input()
         self.player.update(dt)
@@ -432,8 +591,17 @@ class Game:
         self.screen.blit(self.art.scene_background, (0, 0))
         self.screen.blit(self.art.playfield_background, field_origin)
         self.screen.blit(self.playfield_shade, field_origin)
+        self.screen.blit(self.field_vignette, field_origin)
 
-        self.boss.draw(self.screen, self.art.boss_portrait)
+        boss_sprite = self.art.boss_faces[
+            min(self.boss.phase, len(self.art.boss_faces)) - 1
+        ]
+        if self.boss_flash > 0.0 and self.boss.alive:
+            boss_sprite = _flash_sprite(
+                boss_sprite, self.boss_flash / config.BOSS_FLASH_DURATION
+            )
+        self.boss.draw(self.screen, boss_sprite)
+
         for shot in self.player_shots:
             if shot.alive:
                 shot.draw(self.screen, self.art.player_shot)
@@ -442,19 +610,23 @@ class Game:
             and int(self.invulnerable_timer * 12) % 2 == 0
         )
         if not blinking:
-            frame = int(self.animation_timer * 8) % len(self.art.player_frames)
+            # 按本帧横向移动方向挑帧组，静止时回到直立组
+            if self.player.vel.x < -1.0:
+                frames = self.art.player_frames_left
+            elif self.player.vel.x > 1.0:
+                frames = self.art.player_frames_right
+            else:
+                frames = self.art.player_frames
             self.player.draw(
                 self.screen,
                 focus=self.focus,
-                sprite=self.art.player_frames[frame],
+                sprite=frames[int(self.animation_timer * 8) % len(frames)],
             )
+
         for b in self.bullets:
-            b.draw(
-                self.screen,
-                self.art.enemy_bullet_sprites.get(
-                    b.color, self.art.enemy_bullet_sprites[config.RED]
-                ),
-            )
+            b.draw(self.screen)          # 子弹自持贴图，无需外部查表
+        for effect in self.effects:
+            effect.draw(self.screen)
 
         if self.hit_flash > 0:
             self.hit_overlay.set_alpha(round(90 * self.hit_flash / 0.25))
@@ -463,21 +635,33 @@ class Game:
         if self.debug_overlay:
             self._draw_debug_overlay()
 
+        self._draw_phase_hud()
         self._draw_hud()
 
         if self.paused:
             self._draw_center_text("已暂停  (F1 继续)", config.PALE_GOLD)
         elif self.game_over:
-            center_y = config.PLAYFIELD_TOP + config.PLAYFIELD_HEIGHT // 2
-            self._draw_center_text("游戏失败", config.PALE_GOLD)
-            self._draw_center_text(
-                "R 重新开始 · Enter / Esc 返回标题",
-                config.PALE_GOLD,
-                font=self.font,
-                y=center_y + 48,
-            )
+            self._draw_ending(self.art.ending_defeat, "游戏失败")
         elif self.victory:
-            self._draw_center_text("Boss 击破！按 R 重新开始", config.PALE_GOLD)
+            self._draw_ending(self.art.ending_victory, "Boss 击破")
+
+    def _draw_ending(self, background: pygame.Surface, title: str) -> None:
+        """结算画面：整屏插图 + 暗色压罩 + 结果与操作提示。"""
+        center_x = config.SCREEN_W // 2
+        self.screen.blit(background, (0, 0))
+        self.screen.blit(self.ending_shade, (0, 0))
+        self._draw_center_text(
+            title, config.PALE_GOLD, y=config.SCREEN_H // 2 - 60,
+            center_x=center_x,
+        )
+        self._draw_center_text(
+            f"得分 {self.score}    最高分 {self.hiscore}", config.WHITE,
+            font=self.font, y=config.SCREEN_H // 2 + 16, center_x=center_x,
+        )
+        self._draw_center_text(
+            "R 重新开始 · Enter / Esc 返回标题", config.WHITE,
+            font=self.font, y=config.SCREEN_H // 2 + 68, center_x=center_x,
+        )
 
     def _draw_title_screen(self) -> None:
         self.screen.blit(self.title_background, (0, 0))
@@ -594,6 +778,40 @@ class Game:
             max(1, round(self.player.radius)), 0,
         )
 
+    def _draw_phase_hud(self) -> None:
+        """弹幕场顶部的符卡条：符卡名、剩余段数与倒计时。"""
+        bar = pygame.Rect(config.PLAYFIELD_LEFT, config.PLAYFIELD_TOP,
+                          config.PLAYFIELD_WIDTH, 40)
+        shade = pygame.Surface(bar.size, pygame.SRCALPHA)
+        shade.fill((7, 3, 9, 160))
+        self.screen.blit(shade, bar.topleft)
+        pygame.draw.line(
+            self.screen, config.GOLD, bar.bottomleft, bar.bottomright, 1
+        )
+
+        total = len(config.BOSS_PHASE_NAMES)
+        phase = min(self.boss.phase, total)
+        name = config.BOSS_PHASE_NAMES[phase - 1]
+        self.screen.blit(
+            self.font.render(name, True, config.PALE_GOLD),
+            (bar.left + 16, bar.top + 7),
+        )
+
+        # 剩余段数：已过的段位画成空心，未过的画成实心
+        remaining = total - phase + 1
+        marker_x = bar.left + 380
+        for index in range(total):
+            center = (marker_x + index * 26, bar.centery)
+            if index < remaining:
+                pygame.draw.circle(self.screen, config.RED, center, 7)
+                pygame.draw.circle(self.screen, config.PALE_GOLD, center, 7, 1)
+            else:
+                pygame.draw.circle(self.screen, config.GRAY, center, 7, 1)
+
+        seconds = max(0.0, self.phase_timer)
+        timer = self.font.render(f"{seconds:05.2f}", True, config.WHITE)
+        self.screen.blit(timer, timer.get_rect(midright=(bar.right - 16, bar.centery)))
+
     def _draw_hud(self) -> None:
         panel = pygame.Rect(
             config.PLAYFIELD_RIGHT + 32,
@@ -621,36 +839,50 @@ class Game:
         right = panel.right - 24
         self.screen.blit(
             self.font_big.render("红魔馆", True, config.PALE_GOLD),
-            (left, panel.top + 28),
+            (left, panel.top + 24),
         )
         self.screen.blit(
             self.font.render("SCARLET DEVIL MANOR", True, config.MUTED),
-            (left + 2, panel.top + 84),
+            (left + 2, panel.top + 78),
         )
         pygame.draw.line(
             self.screen, config.GOLD,
-            (left, panel.top + 132), (right, panel.top + 132), 1,
+            (left, panel.top + 120), (right, panel.top + 120), 1,
         )
 
+        # 计分区：最高分与当前得分，均右对齐
+        for index, (label, value) in enumerate((
+            ("HISCORE", self.hiscore), ("SCORE", self.score),
+        )):
+            y = panel.top + 134 + index * 34
+            self.screen.blit(self.font.render(label, True, config.MUTED), (left, y))
+            value_surface = self.font.render(str(value), True, config.WHITE)
+            self.screen.blit(value_surface, value_surface.get_rect(topright=(right, y)))
+        pygame.draw.line(
+            self.screen, config.GOLD,
+            (left, panel.top + 206), (right, panel.top + 206), 1,
+        )
+
+        total = len(config.BOSS_PHASE_NAMES)
         self.screen.blit(
             self.font.render("BOSS  /  PHASE", True, config.PALE_GOLD),
-            (left, panel.top + 164),
+            (left, panel.top + 218),
         )
-        self.screen.blit(
-            self.font_big.render(str(self.boss.phase), True, config.WHITE),
-            (left, panel.top + 197),
+        phase_text = self.font.render(
+            f"{min(self.boss.phase, total)} / {total}", True, config.WHITE
         )
+        self.screen.blit(phase_text, phase_text.get_rect(topright=(right, panel.top + 218)))
         self.screen.blit(
-            self.art.boss_portrait,
-            (right - self.art.boss_portrait.get_width(), panel.top + 150),
+            self.art.boss_faces[min(self.boss.phase, len(self.art.boss_faces)) - 1],
+            (right - self.art.boss_portrait.get_width(), panel.top + 250),
         )
 
         health_ratio = max(0.0, self.boss.hp / self.boss.max_hp)
         self.screen.blit(
             self.font.render("生命值  /  HP", True, config.MUTED),
-            (left, panel.top + 260),
+            (left, panel.top + 434),
         )
-        health_bar = pygame.Rect(left, panel.top + 284, panel.width - 48, 18)
+        health_bar = pygame.Rect(left, panel.top + 460, panel.width - 48, 18)
         pygame.draw.rect(self.screen, (47, 19, 28), health_bar)
         fill = health_bar.inflate(-4, -4)
         fill.width = round(fill.width * health_ratio)
@@ -659,32 +891,36 @@ class Game:
         pygame.draw.rect(self.screen, config.GOLD, health_bar, 1)
         pygame.draw.line(
             self.screen, config.GOLD,
-            (left, panel.top + 334), (right, panel.top + 334), 1,
+            (left, panel.top + 504), (right, panel.top + 504), 1,
         )
 
         self.screen.blit(
             self.font.render("残机  /  LIVES", True, config.PALE_GOLD),
-            (left, panel.top + 365),
+            (left, panel.top + 516),
         )
-        icon_y = panel.top + 353
+        icon_y = panel.top + 506
         icon_x = right - 94
         for index in range(config.PLAYER_LIVES):
             icon = self.art.player_icon.copy()
             icon.set_alpha(255 if index < self.lives else 60)
             self.screen.blit(icon, (icon_x + index * 30, icon_y))
+        pygame.draw.line(
+            self.screen, config.GOLD,
+            (left, panel.top + 560), (right, panel.top + 560), 1,
+        )
 
         rows = (
             ("擦弹  /  GRAZE", self.graze_total),
-            ("命中  /  HITS", self.hit_total),
             ("敌弹  /  BULLETS", len(self.bullets)),
+            ("命中  /  HITS", self.hit_total),
         )
         for index, (label, value) in enumerate(rows):
-            y = panel.top + 447 + index * 68
+            y = panel.top + 574 + index * 38
             self.screen.blit(self.font.render(label, True, config.MUTED), (left, y))
             value_surface = self.font.render(str(value), True, config.WHITE)
             self.screen.blit(value_surface, value_surface.get_rect(topright=(right, y)))
 
-        divider_y = panel.top + 668
+        divider_y = panel.top + 700
         pygame.draw.line(
             self.screen, config.GOLD,
             (left, divider_y), (right, divider_y), 1,
@@ -694,7 +930,7 @@ class Game:
                 "调  试  /  DEBUG" if self.debug_overlay else "操  作  /  CONTROL",
                 True, config.PALE_GOLD,
             ),
-            (left, divider_y + 30),
+            (left, divider_y + 20),
         )
         if self.debug_overlay:
             stats = self.debug_stats
@@ -704,7 +940,7 @@ class Game:
                 ("Boss 命中 / HIT", stats["boss_hits"]),
             )
             for index, (label, value) in enumerate(debug_rows):
-                y = divider_y + 80 + index * 42
+                y = divider_y + 62 + index * 38
                 self.screen.blit(
                     self.font.render(label, True, config.MUTED), (left, y)
                 )
@@ -722,16 +958,17 @@ class Game:
         for index, hint in enumerate(hints):
             self.screen.blit(
                 self.font.render(hint, True, config.WHITE),
-                (left, divider_y + 76 + index * 42),
+                (left, divider_y + 62 + index * 38),
             )
 
     def _draw_center_text(
             self, text: str, color, font: pygame.font.Font | None = None,
-            y: int | None = None) -> None:
+            y: int | None = None, center_x: int | None = None) -> None:
         font = font or self.font_big
         surf = font.render(text, True, color)
         center = (
-            config.PLAYFIELD_LEFT + config.PLAYFIELD_WIDTH // 2,
+            center_x if center_x is not None
+            else config.PLAYFIELD_LEFT + config.PLAYFIELD_WIDTH // 2,
             y or config.PLAYFIELD_TOP + config.PLAYFIELD_HEIGHT // 2,
         )
         shadow = font.render(text, True, config.BLACK)

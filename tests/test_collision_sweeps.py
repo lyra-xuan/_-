@@ -1,5 +1,7 @@
 import unittest
+from types import SimpleNamespace
 
+import pygame
 from pygame.math import Vector2
 
 from src import collision, config
@@ -22,6 +24,14 @@ class CollisionSweepTests(unittest.TestCase):
         game.invulnerable_timer = 0.0
         game.game_over = False
         game.debug_stats = Game._empty_debug_stats()
+        stub = pygame.Surface((8, 8), pygame.SRCALPHA)
+        game.art = SimpleNamespace(  # type: ignore[assignment]
+            hit_spark=stub, graze_ring=stub, boss_burst=stub
+        )
+        game.effects = []
+        game.score = 0
+        game.hiscore = 10 ** 9
+        game.graze_fx_cooldown = 0.0
         return game
 
     def test_swept_graze_crossing_grid_boundary_is_not_filtered(self) -> None:

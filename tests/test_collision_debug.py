@@ -1,5 +1,6 @@
 """碰撞调试层的行为测试：开关、当帧统计与绘制副作用。"""
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pygame
@@ -38,6 +39,16 @@ class CollisionDebugTests(unittest.TestCase):
         game.victory = False
         game.game_over = False
         game.running = True
+        stub = pygame.Surface((8, 8), pygame.SRCALPHA)
+        game.art = SimpleNamespace(  # type: ignore[assignment]
+            hit_spark=stub, graze_ring=stub, boss_burst=stub
+        )
+        game.effects = []
+        game.score = 0
+        game.hiscore = 10 ** 9
+        game.phase_timer = config.BOSS_PHASE_TIME_LIMIT
+        game.boss_flash = 0.0
+        game.graze_fx_cooldown = 0.0
         return game
 
     def dispatch_keys(self, game: Game, *keys: int) -> None:

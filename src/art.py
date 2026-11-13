@@ -36,10 +36,8 @@ BULLET_LARGE_RECTS = {
 }
 BULLET_LARGE_RENDER = (34, 34)
 
-# 米弹（etama3 下方两排）。
-BULLET_RICE_RECTS = (
-    (103, 160, 17, 32), (135, 160, 17, 32), (167, 160, 17, 32), (99, 192, 28, 32),
-)
+# 米弹（etama3）：玩家射击使用直线型弹。
+BULLET_RICE_RECT = (103, 160, 17, 32)
 PLAYER_SHOT_RENDER = (14, 30)
 
 # 小玉（etama4）：y=241 一行 4 色，13×13，列距 64。
@@ -59,13 +57,13 @@ BULLET_MID_RECTS = {
 }
 BULLET_MID_RENDER = (26, 26)
 
-# 爆散（etama4 左上角与下方）。
-BULLET_BURST_RECTS = ((1, 1, 62, 62), (2, 176, 61, 63))
-BULLET_BURST_RENDER = (86, 86)
-
 # 特效（eff00，自带 alpha，无需遮罩）。
-EFFECT_RECTS = ((33, 1, 30, 30), (66, 1, 29, 29), (3, 192, 61, 63), (50, 34, 13, 13))
-EFFECT_RENDER = (46, 46)
+EFFECT_SPARK_RECT = (1, 1, 30, 30)      # 命中火花
+EFFECT_RING_RECT = (49, 49, 15, 14)     # 擦弹光环
+EFFECT_BURST_RECT = (3, 192, 61, 63)    # 击破爆散
+EFFECT_SPARK_SIZE = (44, 44)
+EFFECT_RING_SIZE = (34, 32)
+EFFECT_BURST_SIZE = (168, 174)
 
 # 妖精（stg1enm）：8 列网格，左上 4 帧为小型妖精。
 FAIRY_RECTS = ((5, 5, 23, 24), (35, 5, 26, 24), (69, 5, 24, 24), (101, 5, 24, 24))
@@ -169,15 +167,12 @@ class GameArt:
         )
 
         # ---------------- 玩家弹与敌方弹幕 ----------------
-        rice = frames("bullet-a-sheet.png", "bullet-a-mask.png", BULLET_RICE_RECTS)
-        self.player_shot = pygame.transform.smoothscale(rice[0], PLAYER_SHOT_RENDER)
-        self.player_shots = tuple(
-            pygame.transform.smoothscale(frame, PLAYER_SHOT_RENDER) for frame in rice
+        self.player_shot = pygame.transform.smoothscale(
+            _compose(sheet("bullet-a-sheet.png"), sheet("bullet-a-mask.png"),
+                     BULLET_RICE_RECT),
+            PLAYER_SHOT_RENDER,
         )
 
-        self.bullet_rice = tuple(
-            pygame.transform.smoothscale(frame, (22, 42)) for frame in rice
-        )
         self.bullet_large = {
             name: pygame.transform.smoothscale(frame, BULLET_LARGE_RENDER)
             for name, frame in zip(
@@ -186,7 +181,7 @@ class GameArt:
                        tuple(BULLET_LARGE_RECTS.values())),
             )
         }
-        small = {
+        self.bullet_small = {
             name: pygame.transform.smoothscale(frame, BULLET_SMALL_RENDER)
             for name, frame in zip(
                 BULLET_SMALL_RECTS,
@@ -194,7 +189,6 @@ class GameArt:
                        tuple(BULLET_SMALL_RECTS.values())),
             )
         }
-        self.bullet_small = small
         self.bullet_mid = {
             name: pygame.transform.smoothscale(frame, BULLET_MID_RENDER)
             for name, frame in zip(
@@ -203,29 +197,19 @@ class GameArt:
                        tuple(BULLET_MID_RECTS.values())),
             )
         }
-        self.bullet_burst = tuple(
-            pygame.transform.smoothscale(frame, BULLET_BURST_RENDER)
-            for frame in frames("bullet-b-sheet.png", "bullet-b-mask.png",
-                                BULLET_BURST_RECTS)
-        )
-
-        # 主循环按颜色取贴图；青色复用蓝玉贴图，保证旧调用不会回退成红玉。
-        self.enemy_bullet_sprites = {
-            config.WHITE: small["white"],
-            config.RED: small["red"],
-            config.GREEN: small["green"],
-            config.BLUE: small["blue"],
-            config.CYAN: small["blue"],
-        }
 
         # ---------------- 特效与妖精 ----------------
         effect_sheet = sheet("effect-sheet.png")
-        self.effects = tuple(
-            pygame.transform.smoothscale(
-                effect_sheet.subsurface(rect).copy(), EFFECT_RENDER
+
+        def effect(rect: tuple[int, int, int, int],
+                   size: tuple[int, int]) -> pygame.Surface:
+            return pygame.transform.smoothscale(
+                effect_sheet.subsurface(rect).copy(), size
             )
-            for rect in EFFECT_RECTS
-        )
+
+        self.hit_spark = effect(EFFECT_SPARK_RECT, EFFECT_SPARK_SIZE)
+        self.graze_ring = effect(EFFECT_RING_RECT, EFFECT_RING_SIZE)
+        self.boss_burst = effect(EFFECT_BURST_RECT, EFFECT_BURST_SIZE)
         self.fairy_frames = tuple(
             pygame.transform.smoothscale(frame, FAIRY_RENDER)
             for frame in frames("fairy-sheet.png", "fairy-mask.png", FAIRY_RECTS)

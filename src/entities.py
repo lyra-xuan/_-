@@ -67,6 +67,7 @@ class Player(Entity):
             sprite: pygame.Surface | None = None) -> None:
         if sprite is not None:
             surface.blit(sprite, sprite.get_rect(center=self.pos))
+            self._draw_focus_marker(surface, focus)
             return
 
         # 外层擦弹区（半透明），低速移动时更醒目
@@ -74,10 +75,20 @@ class Player(Entity):
             surface, config.BLUE, (self.pos.x, self.pos.y),
             int(self.graze_radius), alpha=90 if focus else 45,
         )
-        # 中心命中区（实心小圆）
-        pygame.draw.circle(surface, config.WHITE,
-                           (int(self.pos.x), int(self.pos.y)),
-                           int(self.radius) + 2)
+        self._draw_focus_marker(surface, focus)
+
+    def _draw_focus_marker(self, surface: pygame.Surface, focus: bool) -> None:
+        """低速时突出显示命中判定点，便于在弹幕中定位。"""
+        center = (round(self.pos.x), round(self.pos.y))
+        if focus:
+            pygame.draw.circle(surface, config.WHITE, center, 11, 2)
+            pygame.draw.circle(
+                surface, config.RED, center, max(2, round(self.radius)), 0
+            )
+        else:
+            pygame.draw.circle(
+                surface, config.WHITE, center, max(1, round(self.radius)), 0
+            )
 
 
 class Bullet(Entity):
@@ -85,11 +96,13 @@ class Bullet(Entity):
 
     def __init__(self, x: float, y: float, vx: float, vy: float,
                  radius: float = config.BULLET_RADIUS,
-                 color: tuple[int, int, int] = config.RED) -> None:
+                 color: tuple[int, int, int] = config.RED,
+                 sprite: pygame.Surface | None = None) -> None:
         super().__init__(x, y)
         self.vel = Vector2(vx, vy)
         self.radius = radius
         self.color = color
+        self.sprite = sprite        # 弹型贴图，为空时回退为程序绘制的圆
         self.prev_pos = Vector2(x, y)  # 上一帧位置
         self.grazed = False            # 每颗子弹只计一次擦弹
 
@@ -108,8 +121,9 @@ class Bullet(Entity):
     def draw(
             self, surface: pygame.Surface,
             sprite: pygame.Surface | None = None) -> None:
-        if sprite is not None:
-            surface.blit(sprite, sprite.get_rect(center=self.pos))
+        image = self.sprite if self.sprite is not None else sprite
+        if image is not None:
+            surface.blit(image, image.get_rect(center=self.pos))
             return
 
         center = (int(self.pos.x), int(self.pos.y))
@@ -190,3 +204,42 @@ class Boss(Entity):
         pygame.draw.circle(surface, config.RED, center, radius)
         pygame.draw.circle(surface, config.YELLOW, center, radius, 3)
         pygame.draw.circle(surface, config.WHITE, center, max(3, radius // 3))
+
+
+class Effect:
+    """一次性特效：贴图从起始缩放扩散并淡出，播完自动消失。
+
+    不参与碰撞，只推进自身计时器，供渲染层做帧动画。
+    """
+
+    def __init__(self, x: float, y: float, image: pygame.Surface, duration: float,
+                 start_scale: float = 0.5, end_scale: float = 1.2,
+                 start_alpha: int = 255, end_alpha: int = 0) -> None:
+        self.pos = Vector2(x, y)
+        self.image = image
+        self.duration = duration
+        self.timer = 0.0
+        self.start_scale = start_scale
+        self.end_scale = end_scale
+        self.start_alpha = start_alpha
+        self.end_alpha = end_alpha
+
+    @property
+    def alive(self) -> bool:
+        return self.timer < self.duration
+
+    def update(self, dt: float) -> None:
+        self.timer += dt
+
+    def draw(self, surface: pygame.Surface) -> None:
+        progress = min(1.0, self.timer / self.duration)
+        scale = self.start_scale + (self.end_scale - self.start_scale) * progress
+        frame = pygame.transform.smoothscale(
+            self.image,
+            (max(1, round(self.image.get_width() * scale)),
+             max(1, round(self.image.get_height() * scale))),
+        )
+        frame.set_alpha(
+            round(self.start_alpha + (self.end_alpha - self.start_alpha) * progress)
+        )
+        surface.blit(frame, frame.get_rect(center=self.pos))

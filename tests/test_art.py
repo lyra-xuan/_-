@@ -35,22 +35,23 @@ class GameArtTests(unittest.TestCase):
         self.assertEqual(self.art.player_frames[0].get_at((0, 0)).a, 0)
         self.assertEqual(self.art.boss_portrait.get_at((0, 0)).a, 0)
         self.assertEqual(
-            self.art.enemy_bullet_sprites[config.RED].get_size(), (18, 18)
+            self.art.bullet_small["red"].get_size(), (18, 18)
         )
         self.assertEqual(self.art.player_shot.get_size(), (14, 30))
 
-    def test_red_and_cyan_enemy_bullets_use_different_art(self) -> None:
-        red = self.art.enemy_bullet_sprites[config.RED]
-        cyan = self.art.enemy_bullet_sprites[config.CYAN]
+    def test_red_and_blue_enemy_bullets_use_different_art(self) -> None:
+        red = self.art.bullet_small["red"]
+        blue = self.art.bullet_small["blue"]
 
-        self.assertNotEqual(red.get_at((9, 9))[:3], cyan.get_at((9, 9))[:3])
+        self.assertNotEqual(red.get_at((9, 9))[:3], blue.get_at((9, 9))[:3])
 
     def test_sprite_collections_are_complete(self) -> None:
         self.assertEqual(len(self.art.bullet_large), 8)
         self.assertEqual(len(self.art.bullet_small), 4)
         self.assertEqual(len(self.art.bullet_mid), 3)
-        self.assertEqual(len(self.art.bullet_burst), 2)
-        self.assertEqual(len(self.art.effects), 4)
+        self.assertEqual(self.art.hit_spark.get_size(), (44, 44))
+        self.assertEqual(self.art.graze_ring.get_size(), (34, 32))
+        self.assertEqual(self.art.boss_burst.get_size(), (168, 174))
         self.assertEqual(len(self.art.fairy_frames), 4)
         self.assertEqual(len(self.art.boss_faces), 3)
         self.assertEqual(self.art.boss_faces[0].get_size(), (176, 178))

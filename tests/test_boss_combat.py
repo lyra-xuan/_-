@@ -1,4 +1,5 @@
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pygame
@@ -38,6 +39,19 @@ class BossCombatTests(unittest.TestCase):
         game.victory = False
         game.game_over = False
         game.running = True
+        # 计分与特效：贴图用占位小方块，避免测试里加载整套素材
+        stub = pygame.Surface((8, 8), pygame.SRCALPHA)
+        game.art = SimpleNamespace(  # type: ignore[assignment]
+            hit_spark=stub, graze_ring=stub, boss_burst=stub,
+            bullet_small={name: stub for name in ("red", "blue", "white")},
+            bullet_large={"magenta": stub},
+        )
+        game.effects = []
+        game.score = 0
+        game.hiscore = 10 ** 9        # 抬高上限，避免测试写盘
+        game.phase_timer = config.BOSS_PHASE_TIME_LIMIT
+        game.boss_flash = 0.0
+        game.graze_fx_cooldown = 0.0
         return game
 
     def dispatch_keys(self, game: Game, *keys: int) -> None:
@@ -219,7 +233,8 @@ class BossCombatTests(unittest.TestCase):
         game.bullets.clear()
         game.boss.take_damage(game.boss.max_hp / 2)
         game._spawn_boss_attack()
-        self.assertEqual(len(game.bullets), config.BOSS_RING_COUNT)
+        # 阶段 2 是双层环：外圈大玉 + 两倍数量的内圈小玉
+        self.assertEqual(len(game.bullets), config.BOSS_RING_COUNT * 3)
 
     def test_phase_one_fan_is_aimed_at_player(self) -> None:
         game = self.make_game()
@@ -236,7 +251,7 @@ class BossCombatTests(unittest.TestCase):
         self.assertEqual(game.bullets, [])
 
         game._update_boss_attacks(0.02)
-        self.assertEqual(len(game.bullets), config.BOSS_RING_COUNT)
+        self.assertEqual(len(game.bullets), config.BOSS_RING_COUNT * 3)
 
     def test_dead_player_shots_are_removed_after_boss_is_defeated(self) -> None:
         game = self.make_game()
