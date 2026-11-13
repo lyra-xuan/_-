@@ -93,6 +93,14 @@ BOSS_FLASH_DURATION = 0.16
 VIGNETTE_COLOR = (10, 3, 9)
 VIGNETTE_MAX_ALPHA = 205
 
+# ---------- 装饰妖精 ----------
+FAIRY_SPAWN_MIN = 1.1      # 两次生成之间的最短间隔（秒）
+FAIRY_SPAWN_MAX = 2.4
+FAIRY_SPEED_MIN = 40.0     # 下落速度范围（像素/秒）
+FAIRY_SPEED_MAX = 78.0
+FAIRY_SWAY_MIN = 18.0      # 左右摆动幅度范围（像素/秒）
+FAIRY_SWAY_MAX = 46.0
+
 # ---------- 空间网格 ----------
 GRID_CELL_SIZE = 96
 

@@ -46,6 +46,11 @@ class BossCombatTests(unittest.TestCase):
             bullet_small={name: stub for name in ("red", "blue", "white")},
             bullet_large={"magenta": stub},
         )
+        game.audio = SimpleNamespace(  # type: ignore[assignment]
+            play=lambda name: None
+        )
+        game.fairies = []
+        game.fairy_timer = config.FAIRY_SPAWN_MIN
         game.effects = []
         game.score = 0
         game.hiscore = 10 ** 9        # 抬高上限，避免测试写盘

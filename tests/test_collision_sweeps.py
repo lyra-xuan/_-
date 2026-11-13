@@ -28,6 +28,9 @@ class CollisionSweepTests(unittest.TestCase):
         game.art = SimpleNamespace(  # type: ignore[assignment]
             hit_spark=stub, graze_ring=stub, boss_burst=stub
         )
+        game.audio = SimpleNamespace(  # type: ignore[assignment]
+            play=lambda name: None
+        )
         game.effects = []
         game.score = 0
         game.hiscore = 10 ** 9

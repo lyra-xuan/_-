@@ -6,6 +6,8 @@
 """
 from __future__ import annotations
 
+import math
+
 import pygame
 from pygame.math import Vector2
 
@@ -204,6 +206,36 @@ class Boss(Entity):
         pygame.draw.circle(surface, config.RED, center, radius)
         pygame.draw.circle(surface, config.YELLOW, center, radius, 3)
         pygame.draw.circle(surface, config.WHITE, center, max(3, radius // 3))
+
+
+class Fairy(Entity):
+    """装饰性小妖精：从场地上方飘落，左右轻微摆动，不参与碰撞。
+
+    只提供视觉点缀，因此没有命中半径，出屏即回收。
+    """
+
+    def __init__(self, x: float, y: float, speed: float, sway: float) -> None:
+        super().__init__(x, y)
+        self.speed = speed
+        self.sway = sway
+        self.phase = 0.0
+        self.timer = 0.0
+
+    def update(self, dt: float) -> None:
+        self.timer += dt
+        self.phase += dt
+        self.pos.y += self.speed * dt
+        self.pos.x += math.sin(self.phase * 1.6) * self.sway * dt
+        if self.pos.y > config.PLAYFIELD_BOTTOM + 60:
+            self.alive = False
+
+    def draw(
+            self, surface: pygame.Surface,
+            frames: tuple[pygame.Surface, ...] | None = None) -> None:
+        if not frames:
+            return
+        image = frames[int(self.timer * 6) % len(frames)]
+        surface.blit(image, image.get_rect(center=self.pos))
 
 
 class Effect:

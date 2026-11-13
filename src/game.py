@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import math
+import random
 from pathlib import Path
 
 import pygame
@@ -13,7 +14,8 @@ from pygame.math import Vector2
 
 from . import config, collision
 from .art import GameArt
-from .entities import Boss, Bullet, Effect, Player, PlayerShot
+from .audio import Audio
+from .entities import Boss, Bullet, Effect, Fairy, Player, PlayerShot
 
 
 def _load_font(size: int) -> pygame.font.Font:
@@ -88,6 +90,7 @@ class Game:
         self.font = _load_font(24)
         self.font_big = _load_font(42)
         self.art = GameArt()
+        self.audio = Audio()
         asset_dir = Path(__file__).resolve().parent.parent / "assets" / "title"
         title_background = pygame.image.load(
             str(asset_dir / "touhou-th06-title.jpg")
@@ -132,6 +135,8 @@ class Game:
         self.boss = Boss(config.BOSS_START_X, config.BOSS_START_Y)
         self.bullets: list[Bullet] = []
         self.player_shots: list[PlayerShot] = []
+        self.fairies: list[Fairy] = []
+        self.fairy_timer = config.FAIRY_SPAWN_MIN
         # 空间网格复用同一个实例，每帧 clear 后重新插入，避免反复新建
         self.grid = collision.SpatialGrid(config.SCREEN_W, config.SCREEN_H,
                                           config.GRID_CELL_SIZE)
@@ -196,9 +201,12 @@ class Game:
         if self.scene == self.SCENE_TITLE:
             if key == pygame.K_UP:
                 self.menu_selection = (self.menu_selection - 1) % len(self.MENU_ITEMS)
+                self.audio.play("menu_move")
             elif key == pygame.K_DOWN:
                 self.menu_selection = (self.menu_selection + 1) % len(self.MENU_ITEMS)
+                self.audio.play("menu_move")
             elif key in (pygame.K_RETURN, pygame.K_KP_ENTER):
+                self.audio.play("menu_ok")
                 if self.menu_selection == 0:
                     self._reset_run()
                     self.scene = self.SCENE_PLAYING
@@ -207,18 +215,21 @@ class Game:
                 else:
                     self.running = False
             elif key == pygame.K_ESCAPE:
+                self.audio.play("menu_cancel")
                 self.running = False
             return
 
         if self.scene == self.SCENE_CONTROLS:
             if key in (pygame.K_ESCAPE, pygame.K_RETURN, pygame.K_KP_ENTER):
+                self.audio.play("menu_cancel")
                 self.scene = self.SCENE_TITLE
             return
 
         if self.game_over:
             if key == pygame.K_r:
                 self._reset_run()
-            elif key in (pygame.K_RETURN, pygame.K_KP_ENTER, pygame.K_ESCAPE):
+            elif key in (pygame.K_RETURN, pygame.K_ESCAPE):
+                self.audio.play("menu_cancel")
                 self.game_over = False
                 self.scene = self.SCENE_TITLE
                 self.menu_selection = 0
@@ -266,6 +277,7 @@ class Game:
             self.player_shots.append(
                 PlayerShot(self.player.pos.x, self.player.pos.y - self.player.radius)
             )
+            self.audio.play("shot")
             self.fire_timer = config.PLAYER_FIRE_INTERVAL
 
     def _spawn_boss_attack(self) -> None:
@@ -333,6 +345,7 @@ class Game:
             self.phase_timer = config.BOSS_PHASE_TIME_LIMIT
             if phase > 1:
                 self.score += config.PHASE_SCORE
+                self.audio.play("phase_change")
 
         self.phase_timer = max(0.0, self.phase_timer - dt)
         if self.phase_timer <= 0.0:
@@ -377,6 +390,7 @@ class Game:
                     self.debug_stats["boss_hits"] += 1
                     self.boss.take_damage(shot.damage)
                     self.boss_flash = config.BOSS_FLASH_DURATION
+                    self.audio.play("enemy_hit")
                     self.effects.append(Effect(
                         shot.pos.x, shot.pos.y, self.art.hit_spark,
                         config.HIT_SPARK_DURATION, start_scale=0.7,
@@ -392,6 +406,7 @@ class Game:
     def _on_boss_defeated(self) -> None:
         """击破 Boss：结算分数、播放大爆特效并清空弹幕。"""
         self.score += config.VICTORY_SCORE
+        self.audio.play("enemy_dead")
         self._register_hiscore()
         self.effects.append(Effect(
             self.boss.pos.x, self.boss.pos.y, self.art.boss_burst,
@@ -424,6 +439,8 @@ class Game:
         self.hit_flash = 0.0
         self.score = 0                 # 单局分数重置，最高分保留
         self.effects.clear()
+        self.fairies.clear()
+        self.fairy_timer = config.FAIRY_SPAWN_MIN
         self.phase_timer = config.BOSS_PHASE_TIME_LIMIT
         self.boss_flash = 0.0
         self.graze_fx_cooldown = 0.0
@@ -435,6 +452,7 @@ class Game:
         self.game_over = False
         self.scene = self.SCENE_PLAYING
         self.animation_timer = 0.0
+        self.audio.play("alert")
 
     def _check_collisions(self) -> None:
         """双层判定：擦弹区（外层，不致命）/ 命中区（内层，致命）。
@@ -489,6 +507,7 @@ class Game:
                         self.art.graze_ring, config.GRAZE_RING_DURATION,
                         start_scale=0.6, end_scale=1.5,
                     ))
+                    self.audio.play("graze")
                     self.graze_fx_cooldown = 0.06
 
     def _on_player_hit(self, bullet: Bullet) -> None:
@@ -498,6 +517,7 @@ class Game:
         bullet.alive = False
         self.hit_total += 1
         self.hit_flash = 0.25
+        self.audio.play("player_dead")
         self.lives -= 1
         self.bullets.clear()
         self.effects.append(Effect(
@@ -523,6 +543,27 @@ class Game:
         for effect in self.effects:
             effect.update(dt)
         self.effects = [effect for effect in self.effects if effect.alive]
+
+    def _update_fairies(self, dt: float) -> None:
+        """装饰性小妖精：定时从场地上方飘落，飞出下缘后回收。
+
+        纯视觉元素，不参与任何碰撞判定。
+        """
+        self.fairy_timer -= dt
+        if self.fairy_timer <= 0.0:
+            self.fairy_timer = random.uniform(
+                config.FAIRY_SPAWN_MIN, config.FAIRY_SPAWN_MAX
+            )
+            self.fairies.append(Fairy(
+                random.uniform(config.PLAYFIELD_LEFT + 80,
+                               config.PLAYFIELD_RIGHT - 80),
+                config.PLAYFIELD_TOP - 30.0,
+                random.uniform(config.FAIRY_SPEED_MIN, config.FAIRY_SPEED_MAX),
+                random.uniform(config.FAIRY_SWAY_MIN, config.FAIRY_SWAY_MAX),
+            ))
+        for fairy in self.fairies:
+            fairy.update(dt)
+        self.fairies = [fairy for fairy in self.fairies if fairy.alive]
 
     def update(self, dt: float) -> None:
         if self.scene != self.SCENE_PLAYING:
@@ -555,6 +596,7 @@ class Game:
             min(config.PLAYFIELD_BOTTOM - self.player.radius, self.player.pos.y),
         )
         self.animation_timer += dt
+        self._update_fairies(dt)
 
         if self.boss.alive:
             self.boss.update(dt)
@@ -592,6 +634,9 @@ class Game:
         self.screen.blit(self.art.playfield_background, field_origin)
         self.screen.blit(self.playfield_shade, field_origin)
         self.screen.blit(self.field_vignette, field_origin)
+
+        for fairy in self.fairies:
+            fairy.draw(self.screen, self.art.fairy_frames)
 
         boss_sprite = self.art.boss_faces[
             min(self.boss.phase, len(self.art.boss_faces)) - 1
