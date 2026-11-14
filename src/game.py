@@ -25,11 +25,33 @@ from .entities import Boss, Bullet, Effect, Fairy, Item, Player, PlayerShot
 
 
 def _load_font(size: int) -> pygame.font.Font:
-    """按优先级挑选一个能显示中文的系统字体。"""
-    for name in ("simsun", "nsimsun", "microsoftyahei", "simhei"):
-        path = pygame.font.match_font(name)
+    """按优先级挑选一个能显示中文的系统字体。
+
+    优先尝试 Windows 已知字体文件路径（避免 ``match_font`` 在 PyInstaller
+    打包后扫描注册表崩溃），失败时再回退到 ``match_font``。
+    """
+    import os
+    candidates = [
+        os.path.join(os.environ.get("WINDIR", r"C:\Windows"), "Fonts", "msyh.ttc"),
+        os.path.join(os.environ.get("WINDIR", r"C:\Windows"), "Fonts", "simsun.ttc"),
+        os.path.join(os.environ.get("WINDIR", r"C:\Windows"), "Fonts", "simhei.ttf"),
+    ]
+    for path in candidates:
+        if os.path.isfile(path):
+            try:
+                return pygame.font.Font(path, size)
+            except Exception:
+                continue
+    for name in ("microsoftyahei", "simsun", "nsimsun", "simhei"):
+        try:
+            path = pygame.font.match_font(name)
+        except Exception:
+            path = None
         if path:
-            return pygame.font.Font(path, size)
+            try:
+                return pygame.font.Font(path, size)
+            except Exception:
+                continue
     return pygame.font.Font(None, size)
 
 
