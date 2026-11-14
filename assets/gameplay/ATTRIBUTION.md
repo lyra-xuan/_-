@@ -17,6 +17,7 @@ Images (`CM_DAT` = character/bullet data, `ST_DAT` = stage data,
   (small orbs, medium orbs, bursts)
 - `effect-sheet.png`: `CM_DAT/eff00.png` (already alpha-encoded)
 - `stage-bg.png` / `stage-bg-mask.png`: `ST_DAT/stg4bg.png` / `stg4bg_a.png`
+  (kept for the older single-stage layout)
 - `fairy-sheet.png` / `fairy-mask.png`: `ST_DAT/stg1enm.png` / `stg1enm_a.png`
 - `fairy-variant-sheet.png` / `fairy-variant-mask.png`:
   `ST_DAT/stg1enm2.png` / `stg1enm2_a.png` (alternate fairy sprite animation)
@@ -28,6 +29,37 @@ Images (`CM_DAT` = character/bullet data, `ST_DAT` = stage data,
 - `ending-afterword.jpg`: `ED_DAT/end01.jpg` (original ending-scene illustration)
 - `ending-credits.jpg`: `ED_DAT/staff00.jpg` (original staff-roll background)
 - `result-screen.jpg`: `TL_DAT/result.jpg` (original score/result screen artwork)
+
+## Three-stage expansion
+
+Per-stage scrolling backdrops (`ST_DAT`, three of the seven stage backgrounds):
+
+- `stage1-bg.png` / `-mask.png`: `ST_DAT/stg1bg.png` / `stg1bg_a.png`
+- `stage2-bg.png` / `-mask.png`: `ST_DAT/stg3bg.png` / `stg3bg_a.png`
+- `stage3-bg.png` / `-mask.png`: `ST_DAT/stg5bg.png` / `stg5bg_a.png`
+
+Per-stage fairy sheets, small (`smallN`) and large (`largeN`) variants:
+
+- `enemy1-sheet.png` / `-mask.png`: `ST_DAT/stg1enm.png` / `stg1enm_a.png`
+- `enemy1b-sheet.png` / `-mask.png`: `ST_DAT/stg1enm2.png` / `stg1enm2_a.png`
+- `enemy2-sheet.png` / `-mask.png`: `ST_DAT/stg2enm.png` / `stg2enm_a.png`
+- `enemy2b-sheet.png` / `-mask.png`: `ST_DAT/stg2enm2.png` / `stg2enm2_a.png`
+- `enemy3-sheet.png` / `-mask.png`: `ST_DAT/stg6enm.png` / `stg6enm_a.png`
+- `enemy3b-sheet.png` / `-mask.png`: `ST_DAT/stg5enm2.png` / `stg5enm2_a.png`
+
+Dialogue and HUD character portraits (`ST_DAT` for enemies, `CM_DAT` for the
+player character):
+
+- `portrait-reimu-1/2/3`: `CM_DAT/face00a.png`, `face00b.png`, `face00c.png`
+- `portrait-rumia-1/2`: `ST_DAT/face03a.png`, `face03b.png`
+- `portrait-cirno-1`: `ST_DAT/face05a.png`
+- `portrait-meiling-1/2`: `ST_DAT/face06a.png`, `face06b.png`
+- `portrait-patchouli-1/2`: `ST_DAT/face08a.png`, `face08b.png`
+- `portrait-sakuya-1/2`: `ST_DAT/face09a.png`, `face09b.png`
+- `portrait-remilia-1`: `ST_DAT/face10a.png`
+
+(The `_a` mask of each portrait follows the same source name, e.g.
+`portrait-rumia-1-mask.png` is `ST_DAT/face03a_a.png`.)
 
 Sound effects live in `../audio/` and come from `IN_DAT` (see the credits file
 there). Original Touhou Project artwork and audio are copyright © ZUN. The user

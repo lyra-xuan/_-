@@ -10,6 +10,8 @@ env/
 build/
 dist/
 *.spec
+build-info.txt
+resources.tar
 
 # IDE / 编辑器
 .vscode/
@@ -25,3 +27,4 @@ Thumbs.db
 saves/
 screenshots/
 hiscore.txt
+progress.json

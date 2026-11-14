@@ -13,7 +13,9 @@ class CollisionSweepTests(unittest.TestCase):
     def make_game(self, player: Player, bullets: list[Bullet]) -> Game:
         game = Game.__new__(Game)
         game.player = player
+        game.boss = None
         game.bullets = bullets
+        game.spell_imperilled = False
         game.grid = collision.SpatialGrid(
             config.SCREEN_W, config.SCREEN_H, config.GRID_CELL_SIZE
         )

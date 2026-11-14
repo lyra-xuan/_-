@@ -69,21 +69,133 @@ EFFECT_SPARK_SIZE = (44, 44)
 EFFECT_RING_SIZE = (34, 32)
 EFFECT_BURST_SIZE = (168, 174)
 
-# 妖精（stg1enm）：8 列网格，左上 4 帧为小型妖精。
-FAIRY_RECTS = ((5, 5, 23, 24), (35, 5, 26, 24), (69, 5, 24, 24), (101, 5, 24, 24))
-FAIRY_RENDER = (40, 42)
-FAIRY_VARIANT_RECTS = (
-    (1, 2, 31, 45), (33, 2, 30, 45), (65, 2, 30, 45),
-    (97, 2, 30, 45), (129, 2, 30, 45),
+# 三关背景（ST_DAT/stg1bg、stg3bg、stg5bg）：三张图集的有效区域一致。
+STAGE_BG_RECT = (15, 15, 241, 210)
+STAGE_BACKGROUND_FILES = (
+    ("stage1-bg.png", "stage1-bg-mask.png"),
+    ("stage2-bg.png", "stage2-bg-mask.png"),
+    ("stage3-bg.png", "stage3-bg-mask.png"),
 )
-FAIRY_VARIANT_RENDER = (38, 52)
 
-# Boss 立绘（face12a / face12c / face10a）。
+# 杂兵图集：每关一套（小型 + 大型）。帧框由遮罩连通域离线实测，
+# 显示时按统一高度等比缩放，不同帧宽度自然不同，与原作逐帧动画一致。
+# 值 = (图集, 遮罩, 帧框, 显示高度)
+ENEMY_SETS = {
+    "small1": ("enemy1-sheet.png", "enemy1-mask.png",
+               ((7, 5, 20, 23), (36, 5, 23, 24), (70, 5, 21, 23), (102, 5, 22, 24)),
+               44),
+    "large1": ("enemy1b-sheet.png", "enemy1b-mask.png",
+               ((1, 2, 31, 45), (33, 2, 29, 45), (65, 2, 29, 45), (97, 2, 29, 45)),
+               66),
+    "small2": ("enemy2-sheet.png", "enemy2-mask.png",
+               ((7, 5, 20, 23), (36, 5, 23, 24), (70, 5, 21, 23), (102, 5, 22, 24)),
+               44),
+    "large2": ("enemy2b-sheet.png", "enemy2b-mask.png",
+               ((2, 8, 27, 51), (42, 10, 32, 49), (89, 10, 33, 51), (132, 10, 40, 51)),
+               64),
+    "small3": ("enemy3-sheet.png", "enemy3-mask.png",
+               ((6, 4, 22, 24), (36, 4, 24, 25), (69, 4, 23, 24), (101, 4, 24, 25)),
+               44),
+    "large3": ("enemy3b-sheet.png", "enemy3b-mask.png",
+               ((3, 4, 24, 59), (35, 4, 24, 59), (67, 4, 24, 59), (100, 4, 23, 59)),
+               68),
+}
+
+# 对话立绘：原作 face 图集（ST_DAT 为敌方、CM_DAT 为自机）。
+# 除蕾米莉亚外，每张 256×256 图都是「左表情 + 右表情」并排贴在一起，
+# 因此每个文件要拆成左右两半，各作为一个独立表情使用；蕾米莉亚是单张全身立绘。
+PORTRAIT_FILES = {
+    "reimu": (
+        "portrait-reimu-1.png", "portrait-reimu-1.png",
+        "portrait-reimu-2.png", "portrait-reimu-2.png",
+        "portrait-reimu-3.png", "portrait-reimu-3.png",
+    ),
+    "rumia": (
+        "portrait-rumia-1.png", "portrait-rumia-1.png",
+        "portrait-rumia-2.png", "portrait-rumia-2.png",
+    ),
+    "cirno": ("portrait-cirno-1.png", "portrait-cirno-1.png"),
+    "meiling": (
+        "portrait-meiling-1.png", "portrait-meiling-1.png",
+        "portrait-meiling-2.png", "portrait-meiling-2.png",
+    ),
+    "patchouli": (
+        "portrait-patchouli-1.png", "portrait-patchouli-1.png",
+        "portrait-patchouli-2.png", "portrait-patchouli-2.png",
+    ),
+    "sakuya": (
+        "portrait-sakuya-1.png", "portrait-sakuya-1.png",
+        "portrait-sakuya-2.png", "portrait-sakuya-2.png",
+    ),
+    "remilia": (
+        "portrait-remilia-1.png",  # 符卡1：红符「猩红射击」— 睁眼原色
+        "portrait-remilia-2.png",  # 符卡2：红魔法「红色魔术」— 闭眼原色
+        "portrait-remilia-1.png",  # 符卡3：冥符「红色的冥界」— 蓝紫调
+        "portrait-remilia-1.png",  # 符卡4：神罚「年幼的恶魔之王」— 金色调
+        "portrait-remilia-2.png",  # 符卡5：神枪「冈格尼尔之枪」— 深红调
+    ),
+}
+# 左半表情和右半表情各占 128×256；蕾米莉亚保留整张 256×256。
+PORTRAIT_RECTS = {
+    "reimu": (
+        (0, 0, 128, 256), (128, 0, 128, 256),
+        (0, 0, 128, 256), (128, 0, 128, 256),
+        (0, 0, 128, 256), (128, 0, 128, 256),
+    ),
+    "rumia": (
+        (0, 0, 128, 256), (128, 0, 128, 256),
+        (0, 0, 128, 256), (128, 0, 128, 256),
+    ),
+    "cirno": ((0, 0, 128, 256), (128, 0, 128, 256)),
+    "meiling": (
+        (0, 0, 128, 256), (128, 0, 128, 256),
+        (0, 0, 128, 256), (128, 0, 128, 256),
+    ),
+    "patchouli": (
+        (0, 0, 128, 256), (128, 0, 128, 256),
+        (0, 0, 128, 256), (128, 0, 128, 256),
+    ),
+    "sakuya": (
+        (0, 0, 128, 256), (128, 0, 128, 256),
+        (0, 0, 128, 256), (128, 0, 128, 256),
+    ),
+    "remilia": (
+        (0, 0, 256, 256), (0, 0, 256, 256),
+        (0, 0, 256, 256), (0, 0, 256, 256),
+        (0, 0, 256, 256),
+    ),
+}
+PORTRAIT_HEIGHT = 340        # 对话框立绘高度
+BOSS_PORTRAIT_HEIGHT = 178   # HUD 立绘高度
+
+# 蕾米莉亚五张符卡对应的立绘色调（RGB 乘数，255 表示该通道不变）。
+# 前两张用原作睁眼/闭眼表情原色，后三张叠加色调区分符卡阶段。
+REMILIA_TINTS = (
+    None,             # 红符「猩红射击」— 原色（睁眼）
+    None,             # 红魔法「红色魔术」— 原色（闭眼）
+    (180, 170, 255),  # 冥符「红色的冥界」— 蓝紫冥界
+    (255, 230, 150),  # 神罚「年幼的恶魔之王」— 金色
+    (255, 120, 120),  # 神枪「冈格尼尔之枪」— 深红
+)
+
+# HUD 内的 Boss 立绘沿用原有三张表情图集，与 Boss 的 HP 阶段联动。
 BOSS_FACE_RECTS = ((4, 0, 252, 256), (4, 0, 248, 256), (0, 0, 256, 256))
 BOSS_FACE_RENDER = (176, 178)
 
-# 关卡背景（stg4bg）：图集内有效区域。
-STAGE_BG_RECT = (15, 15, 241, 210)
+
+def _mask_name(image_name: str) -> str:
+    """由彩色图文件名推出配对的遮罩文件名。"""
+    return image_name[:-4] + "-mask.png"
+
+
+def _fit_height(surface: pygame.Surface, height: int) -> pygame.Surface:
+    """按高度等比缩放，保留每帧自身的宽高比。"""
+    width, source_height = surface.get_size()
+    if source_height == height:
+        return surface
+    return pygame.transform.smoothscale(
+        surface, (max(1, round(width * height / source_height)), height)
+    )
 
 
 def _compose(
@@ -91,19 +203,17 @@ def _compose(
 ) -> pygame.Surface:
     """按矩形裁剪并用遮罩红通道合成 alpha。
 
-    只遍历目标帧的像素；python 逐像素循环对整张 256×256 图集太慢，
-    按帧裁剪后总量可控。
+    逐像素 ``get_at``/``set_at`` 对整张 256×256 图集太慢（13 张立绘要数秒），
+    改用 ``image.tobytes`` 取整块像素后在字节层面搬运 alpha：遮罩的红通道
+    与结果的 alpha 通道步长一致，切片赋值在 C 层完成。这里刻意不用
+    ``Surface.get_buffer``——对子表面它返回的是父表面的整块缓冲。
     """
     x, y, width, height = rect
     source = sheet.subsurface((x, y, width, height))
-    alpha = mask.subsurface((x, y, width, height))
-    result = pygame.Surface((width, height), pygame.SRCALPHA, 32)
-    result.blit(source, (0, 0))
-    for row in range(height):
-        for column in range(width):
-            red, green, blue, _ = result.get_at((column, row))
-            result.set_at((column, row), (red, green, blue, alpha.get_at((column, row)).r))
-    return result
+    mask_region = mask.subsurface((x, y, width, height))
+    pixels = bytearray(pygame.image.tobytes(source, "RGBA"))
+    pixels[3::4] = pygame.image.tobytes(mask_region, "RGBA")[0::4]
+    return pygame.image.frombytes(bytes(pixels), (width, height), "RGBA")
 
 
 def _scale_cover(surface: pygame.Surface,
@@ -143,11 +253,14 @@ class GameArt:
         self.scene_background = pygame.transform.smoothscale(
             sheet("scarlet-mansion.jpg"), (config.SCREEN_W, config.SCREEN_H)
         )
-        stage_bg = _compose(sheet("stage-bg.png"), sheet("stage-bg-mask.png"),
-                            STAGE_BG_RECT)
-        self.playfield_background = _scale_cover(
-            stage_bg, (config.PLAYFIELD_WIDTH, config.PLAYFIELD_HEIGHT)
+        self.stage_backgrounds = tuple(
+            _scale_cover(
+                _compose(sheet(image), sheet(mask), STAGE_BG_RECT),
+                (config.PLAYFIELD_WIDTH, config.PLAYFIELD_HEIGHT),
+            )
+            for image, mask in STAGE_BACKGROUND_FILES
         )
+        self.playfield_background = self.stage_backgrounds[0]
         self.ending_victory = pygame.transform.smoothscale(
             sheet("ending-victory.jpg"), (config.SCREEN_W, config.SCREEN_H)
         )
@@ -216,7 +329,7 @@ class GameArt:
             )
         }
 
-        # ---------------- 特效与妖精 ----------------
+        # ---------------- 特效 ----------------
         effect_sheet = sheet("effect-sheet.png")
 
         def effect(rect: tuple[int, int, int, int],
@@ -228,17 +341,14 @@ class GameArt:
         self.hit_spark = effect(EFFECT_SPARK_RECT, EFFECT_SPARK_SIZE)
         self.graze_ring = effect(EFFECT_RING_RECT, EFFECT_RING_SIZE)
         self.boss_burst = effect(EFFECT_BURST_RECT, EFFECT_BURST_SIZE)
-        self.fairy_frames = tuple(
-            pygame.transform.smoothscale(frame, FAIRY_RENDER)
-            for frame in frames("fairy-sheet.png", "fairy-mask.png", FAIRY_RECTS)
-        )
-        self.fairy_variant_frames = tuple(
-            pygame.transform.smoothscale(frame, FAIRY_VARIANT_RENDER)
-            for frame in frames(
-                "fairy-variant-sheet.png", "fairy-variant-mask.png",
-                FAIRY_VARIANT_RECTS,
-            )
-        )
+        # ---------------- 杂兵（每关一套小型 / 大型） ----------------
+        self.enemy_frames = {
+            key: tuple(_fit_height(frame, height)
+                       for frame in frames(image, mask, rects))
+            for key, (image, mask, rects, height) in ENEMY_SETS.items()
+        }
+        self.fairy_frames = self.enemy_frames["small1"]
+        self.fairy_variant_frames = self.enemy_frames["large1"]
 
         # ---------------- 掉落道具 ----------------
         # 保留原作弹型图案，以红/青/绿区分类别；标签给出道具用途缩写。
@@ -275,7 +385,7 @@ class GameArt:
             self.item_sprites[kind] = sprite
         self.item_halo = self.graze_ring
 
-        # ---------------- Boss 立绘 ----------------
+        # ---------------- Boss 立绘与对话立绘 ----------------
         self.boss_faces = tuple(
             pygame.transform.smoothscale(
                 _compose(sheet(image_name), sheet(mask_name), rect),
@@ -288,3 +398,28 @@ class GameArt:
             )
         )
         self.boss_portrait = self.boss_faces[0]
+
+        # 原作 face 图集：一角色多张表情，一次合成后按两种高度各缩放一份。
+        raw_portraits = {}
+        for key, names in PORTRAIT_FILES.items():
+            frames = []
+            for i, (name, rect) in enumerate(zip(names, PORTRAIT_RECTS[key])):
+                frame = _compose(sheet(name), sheet(_mask_name(name)), rect)
+                if key == "remilia" and i < len(REMILIA_TINTS):
+                    tint = REMILIA_TINTS[i]
+                    if tint is not None:
+                        tr, tg, tb = tint
+                        overlay = pygame.Surface(frame.get_size(), pygame.SRCALPHA)
+                        overlay.fill((tr, tg, tb, 255))
+                        frame.blit(overlay, (0, 0), special_flags=pygame.BLEND_RGBA_MULT)
+                frames.append(frame)
+            raw_portraits[key] = tuple(frames)
+        self.portraits = {
+            key: tuple(_fit_height(frame, PORTRAIT_HEIGHT) for frame in group)
+            for key, group in raw_portraits.items()
+        }
+        self.hud_portraits = {
+            key: tuple(_fit_height(frame, BOSS_PORTRAIT_HEIGHT)
+                       for frame in group)
+            for key, group in raw_portraits.items()
+        }

@@ -4,10 +4,10 @@ import pygame
 
 from src import config
 from src.art import (
-    FAIRY_VARIANT_RECTS,
-    FAIRY_VARIANT_RENDER,
+    ENEMY_SETS,
     ITEM_LABELS,
     ITEM_RENDER,
+    PORTRAIT_FILES,
     GameArt,
 )
 from src.entities import Player
@@ -63,9 +63,11 @@ class GameArtTests(unittest.TestCase):
     def test_sprite_collections_are_complete(self) -> None:
         self.assertEqual(len(self.art.bullet_large), 8)
         self.assertEqual(len(self.art.bullet_small), 4)
-        self.assertEqual(len(self.art.fairy_variant_frames), len(FAIRY_VARIANT_RECTS))
+        self.assertEqual(
+            len(self.art.fairy_variant_frames), len(ENEMY_SETS["large1"][2])
+        )
         self.assertTrue(all(
-            frame.get_size() == FAIRY_VARIANT_RENDER
+            frame.get_height() == ENEMY_SETS["large1"][3]
             for frame in self.art.fairy_variant_frames
         ))
         self.assertEqual(len(self.art.bullet_mid), 3)
@@ -75,6 +77,31 @@ class GameArtTests(unittest.TestCase):
         self.assertEqual(len(self.art.fairy_frames), 4)
         self.assertEqual(len(self.art.boss_faces), 3)
         self.assertEqual(self.art.boss_faces[0].get_size(), (176, 178))
+
+    def test_stage_and_enemy_collections_cover_all_three_stages(self) -> None:
+        self.assertEqual(len(self.art.stage_backgrounds), 3)
+        self.assertIs(self.art.playfield_background, self.art.stage_backgrounds[0])
+        for background in self.art.stage_backgrounds:
+            self.assertEqual(
+                background.get_size(),
+                (config.PLAYFIELD_WIDTH, config.PLAYFIELD_HEIGHT),
+            )
+        self.assertEqual(set(self.art.enemy_frames), set(ENEMY_SETS))
+        for key, (_image, _mask, rects, height) in ENEMY_SETS.items():
+            frames = self.art.enemy_frames[key]
+            self.assertEqual(len(frames), len(rects), key)
+            self.assertTrue(all(f.get_height() == height for f in frames), key)
+
+    def test_dialogue_and_hud_portraits_load_for_every_character(self) -> None:
+        self.assertEqual(set(self.art.portraits), set(PORTRAIT_FILES))
+        for key, names in PORTRAIT_FILES.items():
+            self.assertEqual(len(self.art.portraits[key]), len(names), key)
+            self.assertEqual(len(self.art.hud_portraits[key]), len(names), key)
+            for frame in self.art.portraits[key]:
+                self.assertEqual(frame.get_height(), 340)
+            for frame in self.art.hud_portraits[key]:
+                self.assertEqual(frame.get_height(), 178)
+        self.assertTrue(self.art.portraits["reimu"][0].get_at((0, 0)).a == 0)
 
     def test_item_sprites_reuse_bullet_art_at_a_uniform_size(self) -> None:
         self.assertEqual(len(self.art.item_sprites), len(config.ITEM_KINDS))

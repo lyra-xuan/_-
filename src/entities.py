@@ -7,11 +7,15 @@
 from __future__ import annotations
 
 import math
+from typing import TYPE_CHECKING
 
 import pygame
 from pygame.math import Vector2
 
 from . import config
+
+if TYPE_CHECKING:      # 仅用于类型标注，避免与 spells 形成导入环
+    from .spells import BossSpec, Emitter
 
 
 _OVERLAY_CACHE: dict[tuple, pygame.Surface] = {}
@@ -165,24 +169,48 @@ class PlayerShot(Entity):
 
 
 class Boss(Entity):
-    """单关 Boss：水平往返移动，以剩余生命值切换攻击阶段。"""
+    """可战斗角色：水平往返移动，以剩余生命值切换符卡。
 
-    def __init__(self, x: float, y: float) -> None:
+    原本只支持「三段符卡」，现在符卡数与名称都由 :class:`~src.spells.BossSpec`
+    给出，中 Boss 与关底 Boss 共用同一个类。
+    """
+
+    def __init__(self, x: float, y: float,
+                 spec: "BossSpec | None" = None) -> None:
         super().__init__(x, y)
         self.prev_pos = Vector2(self.pos)
         self.radius = config.BOSS_RADIUS
-        self.max_hp = config.BOSS_MAX_HP
+        if spec is None:
+            # 延迟导入：spells 依赖 entities 的 Bullet，模块级导入会成环
+            from .spells import DEFAULT_BOSS_SPEC
+            spec = DEFAULT_BOSS_SPEC
+        self.spec = spec
+        self.midboss = spec.midboss
+        self.max_hp = spec.max_hp
         self.hp = self.max_hp
         self.direction = 1
+        self.spell_angle = 0.0      # ring / spiral 的整体旋转相位（弧度）
+        self.spell_elapsed = 0.0    # 当前符卡已经持续的时间
+
+    @property
+    def spell_count(self) -> int:
+        return len(self.spec.spells)
 
     @property
     def phase(self) -> int:
-        """按剩余生命值把整场战斗切成三段符卡。"""
-        if self.hp <= self.max_hp / 3.0:
-            return 3
-        if self.hp <= self.max_hp * 2.0 / 3.0:
-            return 2
-        return 1
+        """当前符卡序号（1 起）。把总生命值均分给各张符卡。"""
+        total = self.spell_count
+        if total <= 0:
+            return 1
+        segment = self.max_hp / total
+        remaining = math.ceil(self.hp / segment) if self.hp > 0.0 else 0
+        return min(total, max(1, total - remaining + 1))
+
+    @property
+    def spell(self):
+        """当前正在展开的符卡。"""
+        spells = self.spec.spells
+        return spells[min(self.phase, len(spells)) - 1]
 
     def take_damage(self, amount: float) -> None:
         self.hp = max(0.0, self.hp - max(0.0, amount))
@@ -190,6 +218,7 @@ class Boss(Entity):
 
     def update(self, dt: float) -> None:
         self.prev_pos = Vector2(self.pos)
+        self.spell_elapsed += dt
         self.pos.x += self.direction * config.BOSS_MOVE_SPEED * dt
 
         if self.pos.x <= config.BOSS_LEFT_BOUND:
@@ -214,26 +243,42 @@ class Boss(Entity):
 
 
 class Fairy(Entity):
-    """小妖精：从场地上方飘落，左右轻微摆动，可被玩家弹击破。
+    """小妖精：按编队入场，可停留射击，被击破后掉落道具。
 
-    被击破时由 ``Game`` 结算分数并掉落道具；出屏后自动回收。
+    运动分三段：``enter`` 从场地上方飘落（可左右摆动）→ ``hover`` 在指定高度
+    悬停一段时间 → ``leave`` 加速离场。不指定 ``hover_y`` 时退化为「一直飘落」，
+    与最初的装饰性妖精行为完全一致。
     """
 
     def __init__(
         self, x: float, y: float, speed: float, sway: float,
-        variant: bool = False,
+        variant: bool = False, *,
+        frames_key: str = "",
+        hp: float | None = None,
+        drop: str | None = None,
+        attack: "Emitter | None" = None,
+        hover_y: float | None = None,
+        hover_time: float = 0.0,
     ) -> None:
         super().__init__(x, y)
         self.prev_pos = Vector2(self.pos)
         self.radius = config.FAIRY_RADIUS
-        self.max_hp = config.FAIRY_HP
+        self.max_hp = config.FAIRY_HP if hp is None else hp
         self.hp = self.max_hp
         self.speed = speed
         self.sway = sway
         self.variant = variant
+        self.frames_key = frames_key or ("large1" if variant else "small1")
+        self.drop = drop                # 指定掉落种类；为空时走全局轮换表
+        self.attack = attack            # spells.Emitter，为空则不射击
+        self.fire_timer = 0.0
         self.phase = 0.0
         self.timer = 0.0
-        self.hit_flash = 0.0        # 受击闪白计时
+        self.hit_flash = 0.0            # 受击闪白计时
+        self.hover_y = hover_y
+        self.hover_time = hover_time
+        self.hover_timer = 0.0
+        self.state = "enter"            # enter → hover → leave
 
     def take_damage(self, amount: float) -> None:
         self.hp = max(0.0, self.hp - max(0.0, amount))
@@ -244,8 +289,22 @@ class Fairy(Entity):
         self.timer += dt
         self.phase += dt
         self.hit_flash = max(0.0, self.hit_flash - dt)
-        self.pos.y += self.speed * dt
-        self.pos.x += math.sin(self.phase * 1.6) * self.sway * dt
+        self.fire_timer = max(0.0, self.fire_timer - dt)
+
+        if self.state == "enter":
+            self.pos.y += self.speed * dt
+            self.pos.x += math.sin(self.phase * 1.6) * self.sway * dt
+            if self.hover_y is not None and self.pos.y >= self.hover_y:
+                self.pos.y = self.hover_y
+                self.state = "hover"
+        elif self.state == "hover":
+            self.hover_timer += dt
+            self.pos.x += math.sin(self.phase * 1.6) * self.sway * dt
+            if self.hover_timer >= self.hover_time:
+                self.state = "leave"
+        else:
+            self.pos.y += self.speed * 1.5 * dt
+
         if self.pos.y > config.PLAYFIELD_BOTTOM + 60:
             self.alive = False
 

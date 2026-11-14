@@ -2,9 +2,14 @@
 
 采用「夹紧的时间步长」推进逻辑：每帧用 ``clock.tick`` 得到真实 elapsed，
 并夹紧到 ``MAX_DT``，保证物理与碰撞在不同机器上表现一致，同时避免卡顿后穿模。
+
+关卡流程交给 :class:`~src.director.StageDirector`：它按剧本依次给出过场、对话、
+杂兵波次与 Boss 战，本类只负责把返回的杂兵投放进场、按需生成 Boss、在 Boss
+被击破时回报，并把当前状态画出来。
 """
 from __future__ import annotations
 
+import json
 import math
 import random
 from pathlib import Path
@@ -12,9 +17,10 @@ from pathlib import Path
 import pygame
 from pygame.math import Vector2
 
-from . import config, collision
+from . import config, collision, spells
 from .art import GameArt
 from .audio import Audio
+from .director import BANNER, FIGHT, TALK, StageDirector
 from .entities import Boss, Bullet, Effect, Fairy, Item, Player, PlayerShot
 
 
@@ -73,16 +79,54 @@ def _save_hiscore(value: int) -> None:
         pass       # 无写权限时静默忽略，不影响游戏
 
 
+def _progress_path() -> Path:
+    return Path(__file__).resolve().parent.parent / config.PROGRESS_FILE
+
+
+def _load_progress() -> dict:
+    """读取关卡解锁进度。返回 ``{"unlocked": 1, "all_cleared": false}``。"""
+    try:
+        data = json.loads(_progress_path().read_text(encoding="utf-8"))
+        return {
+            "unlocked": int(data.get("unlocked", 1)),
+            "all_cleared": bool(data.get("all_cleared", False)),
+        }
+    except (OSError, ValueError, json.JSONDecodeError):
+        return {"unlocked": 1, "all_cleared": False}
+
+
+def _save_progress(unlocked: int, all_cleared: bool) -> None:
+    try:
+        _progress_path().write_text(
+            json.dumps({"unlocked": unlocked, "all_cleared": all_cleared},
+                       ensure_ascii=False),
+            encoding="utf-8",
+        )
+    except OSError:
+        pass
+
+
 class Game:
     """游戏主体：窗口、主循环、输入、碰撞与渲染。"""
 
     SCENE_TITLE = "title"
     SCENE_CONTROLS = "controls"
+    SCENE_STAGE_SELECT = "stage_select"
     SCENE_PLAYING = "playing"
-    ENDING_PAGES = ("result", "afterword", "credits")
+    SCENE_AFTERWORD = "afterword"
+    SCENE_CG_GALLERY = "cg_gallery"
+    CHEAT_PASSWORD = "472977"          # 作弊模式解锁密码
+    ENDING_PAGES = ("result", "afterword", "afterword", "afterword", "credits")
+    STAGE_TITLES = ("紅霧の麓", "霧の湖", "紅魔館")
+    STAGE_SUBTITLES = (
+        "Scarlet Mist  /  Stage 1",
+        "Misty Lake  /  Stage 2",
+        "Scarlet Devil Mansion  /  Final Stage",
+    )
+    STAGE_BOSS_NAMES = ("露米婭", "琪露諾", "蕾米莉亞")
     TITLE_INFO_PANEL_RECT = (52, 52, 500, 360)
-    MENU_ITEMS = ("开始游戏", "操作说明", "退出游戏")
-    ENTRY_CARD_DURATION = 1.8
+    MENU_ITEMS = ("开始游戏", "紅霧人物録", "操作说明", "退出游戏")
+    MENU_ITEMS_CLEARED = ("开始游戏", "紅霧人物録", "操作说明", "退出游戏", "日后谈")
     # 说明书分三页：背景 → 用语 → 操作
     MANUAL_PAGES = ("背景说明", "用语解说", "操作指南")
 
@@ -94,14 +138,12 @@ class Game:
         "　而是浓得化不开的绯色，连满月也被浸成血红。人里的灯火",
         "　在雾中熄灭，夜长得望不见尽头。",
         "",
-        "　　博丽的巫女再也坐不住。她循着雾的源头飞向湖心，",
-        "　在红雾最浓处，望见一座矗立湖畔的洋馆——红魔馆。",
+        "　　博丽的巫女循着雾的源头一路追去，行程分成三站。",
+        "　先是红雾笼罩的人里近郊，接着是雾气最浓的雾之湖，",
+        "　最后是矗立湖畔、掀起整场异变的红魔馆。",
         "",
-        "　　馆中住着活了五百年的吸血鬼，蕾米莉亚·史卡雷特。",
-        "　她兴致勃勃地铺开漫天符卡——因为于她而言，",
-        "　弹幕是比言语更诚实的问候。",
-        "",
-        "　　躲开绯红的弹雨，穿过三重符卡，",
+        "　　每一站都是一场杂兵波次、一位中 Boss、一位关底 Boss。",
+        "　躲开绯红的弹雨，逐张符卡破开，",
         "　把这位任性的吸血鬼，从漫长的夜里唤醒吧。",
     )
 
@@ -110,16 +152,19 @@ class Game:
         ("幻想乡", "被遗忘之物栖居的边境之地，本作的舞台"),
         ("博丽的巫女", "异变退治者，也就是玩家操纵的自机"),
         ("红魔馆", "矗立湖畔的洋馆，吸血鬼蕾米莉亚的居所"),
+        ("关卡 · Stage", "全作三关，每关依次为杂兵波次、中 Boss、关底 Boss"),
         ("符卡 · Spell Card", "东方独有的弹幕规则，一张符卡即一段弹幕式样"),
-        ("红符 / 红魔法 / 神枪", "蕾米莉亚三重符卡的类别名，对应三个战斗阶段"),
+        ("中 Boss", "波次之后登场的强敌，血量较低，只展开一张符卡"),
+        ("关底 Boss", "每关最后的首领，血量高、符卡多，逐张推进"),
         ("弹幕", "符卡铺开的子弹群，全数躲开即为破符"),
         ("自机", "玩家操纵的角色"),
         ("残机", "剩余生命数，本作 3 条，受击减一"),
         ("判定点", "自机唯一的受击点，低速时可见"),
         ("擦弹 · Graze", "敌弹擦过判定点外圈未被击中，可得分"),
+        ("灵击 · Spell Card", "消耗一枚符卡，短时无敌并消去身边的弹幕"),
         ("红玉 · POWER", "PWR 标记；火力 +0.05，妖精轮换或 Boss 转阶段掉落"),
         ("青玉 · POINT", "PTS 标记；得分 +500，是妖精最常见的掉落"),
-        ("绿玉 · LIFE", "1UP 标记；残机 +1，稀有妖精或第三符卡掉落"),
+        ("绿玉 · LIFE", "1UP 标记；残机 +1，稀有妖精或最终符卡掉落"),
     )
 
     # 页面三：按键表
@@ -127,30 +172,58 @@ class Game:
         ("方向键 / WASD", "移动自机"),
         ("Shift", "低速移动，判定点收缩，便于穿过弹缝"),
         ("Z", "点按单发，按住连续射击"),
+        ("X", "灵击（Bomb）：消去身边弹幕，短时无敌"),
         ("F1", "暂停 / 继续"),
         ("F2", "开关碰撞调试层（判定圆、扫掠线、空间网格）"),
-        ("F3", "作弊模式：角色无敌（再次按下关闭）"),
+        ("F3", "作弊模式：输入密码后解锁无敌（再次输入关闭）"),
         ("R", "胜负结算后重新开始"),
         ("胜利后 ← / →", "翻阅战绩、后记与鸣谢"),
-        ("Enter", "胜利后翻页/结束阅读；失败后返回标题"),
+        ("Enter", "推进对话；胜利后翻页/结束阅读；失败后返回标题"),
         ("Esc", "返回标题；战斗中退出游戏"),
     )
-    VICTORY_AFTERWORD = (
-        "紅霧散去，滿月重新照亮了湖面。",
-        "蕾米莉亞仍說，這不過是一場稍有趣味的遊戲。",
-        "咲夜默默收拾彈痕與碎裂的窗玻璃，",
-        "又替主人端來一杯溫熱的紅茶。",
-        "",
-        "博麗的巫女沒有收下謝禮，只確認人里的燈火",
-        "已重新亮起，便乘風回到神社。",
-        "",
-        "數日之後，紅魔館再度傳出彈幕的聲響。",
-        "幻想鄉的異変，大概從來不曾真正完結。",
+    VICTORY_AFTERWORD_PAGES = (
+        (
+            "紅霧散去，滿月重新照亮了霧之湖的湖面。",
+            "蕾米莉亞仍說，這不過是一場稍有趣味的遊戲，",
+            "還抱怨著月亮變回了單調的蒼白色。",
+            "",
+            "咲夜默默收拾彈痕與碎裂的窗玻璃，",
+            "又替主人端來一杯溫熱的紅茶；",
+            "美鈴靠在門柱上打盹，帕秋莉則躲回了書架深處。",
+            "",
+            "「下次，我會準備得更有趣一點。」",
+            "吸血鬼的笑聲，隨著紅茶的蒸氣一同消散在夜風裡。",
+        ),
+        (
+            "博麗的巫女沒有收下謝禮，",
+            "只確認人里的燈火已重新亮起，便乘風回到神社。",
+            "",
+            "路上經過霧之湖，冰已化盡，",
+            "水面映著滿月，像是什麼都沒發生過。",
+            "湖邊的冰之妖精正對著自己的倒影生悶氣，",
+            "嘴裡念念有詞地說著「最強」兩個字。",
+            "",
+            "神社的賽錢箱依舊空空如也——",
+            "這件事，倒是從未改變。",
+        ),
+        (
+            "數日之後，紅魔館再度傳出彈幕的聲響。",
+            "聽說是館主與圖書館的魔女，為了「紅月亮的最佳觀測角度」",
+            "又在院子裡展開了符卡對決。",
+            "",
+            "人里的孩子們在夕陽下追逐玩耍，",
+            "沒有人記得那場被紅霧籠罩的夜晚。",
+            "",
+            "幻想鄉的異変，大概從來不曾真正完結。",
+            "而博麗的巫女，也永遠不會缺下一份工作。",
+            "",
+            "——紅霧異變，於此落幕。",
+        ),
     )
     VICTORY_CREDITS = (
         ("原作", "東方Project / 上海アリス幻樂団"),
-        ("音乐", "Peaceful Romancer / ZUN"),
-        ("曲目来源", "《东方怪绮谈》FM86 原曲"),
+        ("音乐", "ZUN"),
+        ("曲目来源", "《东方红魔乡》TH06 原作 MIDI"),
         ("素材", "東方紅魔郷（TH06）原作素材"),
         ("制作", "lyra"),
     )
@@ -159,11 +232,93 @@ class Game:
         "ありがとう。",
     )
 
+    # 角色图鉴（CG館）：按出场顺序排列。
+    # 每条：(立绘键, 显示名, 英文/日文称号, 身份, 介绍段落)
+    CG_GALLERY_ENTRIES = (
+        (
+            "reimu", "博麗靈夢", "Reimu Hakurei",
+            "博麗神社的巫女",
+            (
+                "住在博麗神社的巫女，負責解決幻想鄉的各種異變。",
+                "雖然平常看起來有些懶散，實際上彈幕功底紮實，",
+                "退治妖怪從不手軟。賽錢箱常年空空如也，",
+                "這件事倒是從未改變過。",
+            ),
+            "靈夢",
+        ),
+        (
+            "rumia", "露米婭", "Rumia",
+            "棲息在霧中的黑暗妖怪",
+            (
+                "操縱黑暗程度的能力的妖怪。",
+                "在紅霧彌漫的山麓出沒，以黑暗為掩護偷襲過路人。",
+                "個性有些冒失，自稱「最強」的語氣倒是不小，",
+                "實力嘛……就當作是夜晚的一點消遣吧。",
+            ),
+            "露米婭",
+        ),
+        (
+            "cirno", "琪露諾", "Cirno",
+            "霧之湖的冰之妖精",
+            (
+                "住在霧之湖的冰之妖精，自稱「最強」。",
+                "能自由操控冰與冷氣，湖面的薄冰便是她的傑作。",
+                "個性天真又好勝，最喜歡和過路人較量彈幕。",
+                "雖然常常輸，但「最強」二字從未改口。",
+            ),
+            "琪露諾",
+        ),
+        (
+            "meiling", "紅美鈴", "Hong Meiling",
+            "紅魔館的門衛",
+            (
+                "紅魔館的門衛，中國來的妖怪。",
+                "擅長體術與氣功，認真盡責卻常常在值班時打瞌睡。",
+                "對闖入者毫不留情，不過偶爾也會放過",
+                "看起來不像壞人的客人——雖然事後常被咲夜罵。",
+            ),
+            "美鈴",
+        ),
+        (
+            "patchouli", "帕秋莉·諾蕾姬", "Patchouli Knowledge",
+            "紅魔館圖書館的魔女",
+            (
+                "紅魔館地下大圖書館的主人，活了百年以上的魔法使。",
+                "精通七曜魔法，書庫裡藏著無數禁忌的咒文。",
+                "體弱多病，卻能以壓倒性的彈幕量彌補體力的不足。",
+                "平時總是埋頭書堆，不太願意見客。",
+            ),
+            "帕秋莉",
+        ),
+        (
+            "sakuya", "十六夜咲夜", "Sakuya Izayoi",
+            "紅魔館的女僕長",
+            (
+                "紅魔館的女僕長，能操縱時間。",
+                "舉止優雅、做事俐落，把整座洋館打理得井然有序。",
+                "以小刀為武器，能在一瞬間擲出無數飛刀，",
+                "對主人蕾米莉亞絕對忠誠。",
+            ),
+            "咲夜",
+        ),
+        (
+            "remilia", "蕾米莉亞·斯卡蕾特", "Remilia Scarlet",
+            "紅魔館的館主",
+            (
+                "活了五百年的吸血鬼，紅魔館的館主。",
+                "為了看一眼紅色的月亮，用紅霧籠罩了整個幻想鄉。",
+                "外表是嬌小的少女，實力卻極為恐怖，",
+                "以五張符卡堂堂正正地迎接博麗的巫女。",
+            ),
+            "蕾米莉亞",
+        ),
+    )
+
     def __init__(self) -> None:
         pygame.init()
         self.screen = pygame.display.set_mode((config.SCREEN_W, config.SCREEN_H))
         pygame.key.stop_text_input()
-        pygame.display.set_caption("弹幕射击 - 碰撞检测 Demo")
+        pygame.display.set_caption("东方红雾录 · 红雾异变")
         self.clock = pygame.time.Clock()
         self.font = _load_font(24)
         self.font_big = _load_font(42)
@@ -190,7 +345,9 @@ class Game:
         self.ending_shade.fill((7, 3, 9, 168))
 
         menu_atlas = pygame.image.load(str(asset_dir / "project-striker-menu.webp"))
-        self.title_menu_images = tuple(
+        # 加载全部 6 行 atlas（每行 2 列：选中/未选中），按菜单项映射取用。
+        # atlas 行：0=Game Start, 1=Replay, 2=Player Data, 3=Manual, 4=Config, 5=Quit
+        self._menu_atlas_rows = tuple(
             tuple(
                 pygame.transform.smoothscale(
                     menu_atlas.subsurface((column * 256, row * 64, 256, 64)),
@@ -198,41 +355,69 @@ class Game:
                 )
                 for column in (0, 1)
             )
-            for row in (0, 3, 5)
+            for row in range(6)
         )
+        # 菜单项 → atlas 行映射
+        self.MENU_ATLAS_ROW = {
+            "开始游戏": 0,
+            "紅霧人物録": 2,
+            "操作说明": 3,
+            "退出游戏": 5,
+            "日后谈": 1,
+        }
 
         self.running = True
         self.scene = self.SCENE_TITLE
         self.menu_selection = 0
+        self.stage_select_index = 0      # 关卡选择界面当前选中的关卡（0 起）
+        self.unlocked_stage = 1          # 已解锁的最高关卡序号（1 起，默认第 1 关）
+        self.all_cleared = False         # 是否通关全部关卡（解锁日后谈）
+        self.afterword_only = False      # 是否从菜单单独进入日后谈
+        self.cg_gallery_index = 0        # 角色图鉴当前选中角色（0 起）
+        self.cg_detail_active = False    # 是否进入角色详情页（查看多张 CG）
+        self.cg_detail_cg_index = 0      # 详情页中当前查看的 CG 索引
+        progress = _load_progress()
+        self.unlocked_stage = progress["unlocked"]
+        self.all_cleared = progress["all_cleared"]
         self.manual_page = 0          # 说明书当前页：背景 / 用语 / 操作
         self.ending_page = 0
-        self.entry_card_timer = 0.0
         self.paused = False
         self.god_mode = False
+        self.cheat_prompt_active = False    # 是否正在输入作弊密码
+        self.cheat_input = ""               # 当前已输入的密码字符
         self.victory = False
         self.game_over = False
         self.lives = config.PLAYER_LIVES
         self.invulnerable_timer = 0.0
         self.focus = False            # 是否处于低速（focus）状态，由 update 写入
+        self.bombs = config.PLAYER_BOMB_START   # 灵击（Bomb）存量
+        self.bomb_timer = 0.0                   # 灵击无敌/清弹剩余时间
 
         self.player = Player(
             config.PLAYER_START_X, config.PLAYER_START_Y
         )
-        self.boss = Boss(config.BOSS_START_X, config.BOSS_START_Y)
+        # 关卡推进交给 director；Boss 只在对局中出现，未开打时为 None
+        self.director = StageDirector()
+        self.boss: Boss | None = None
         self.bullets: list[Bullet] = []
         self.player_shots: list[PlayerShot] = []
         self.fairies: list[Fairy] = []
         self.fairy_kill_count = 0
         self.items: list[Item] = []
-        self.fairy_timer = config.FAIRY_SPAWN_MIN
         # 空间网格复用同一个实例，每帧 clear 后重新插入，避免反复新建
         self.grid = collision.SpatialGrid(config.SCREEN_W, config.SCREEN_H,
                                           config.GRID_CELL_SIZE)
         self.shooting = False
         self.shoot_requested = False
         self.fire_timer = 0.0
-        self.boss_attack_timer = config.BOSS_PHASE1_INTERVAL
-        self.boss_attack_phase = self.boss.phase
+        self.boss_attack_phase = 0          # 当前符卡序号，用于检测换段
+        self.spell_timers: list[float] = []  # 各发射器的独立冷却
+        self.spell_imperilled = False        # 当前符卡期间是否被击中 / 用过灵击
+        self.spell_timed_out = False         # 当前符卡是否因超时结束
+        self.spells_captured = 0             # 成功取得的符卡数
+        self.spells_failed = 0               # 失败（被击中 / 灵击 / 超时）的符卡数
+        self.awarded_clear = 0               # 已发放通关奖励的关卡序号
+        self.spell_announce_timer = 0.0      # 符卡名与技能描述的播报倒计时
         self.graze_total = 0
         self.hit_total = 0
         self.hit_flash = 0.0          # 命中时的红屏闪烁计时
@@ -257,11 +442,12 @@ class Game:
         self.hiscore = _load_hiscore()
         self.power = config.PLAYER_POWER_START   # 火力：决定自机弹幕密度
         self.item_total = 0                       # 本局已拾取道具数
-        self.spiral_angle = 0.0                   # 阶段 3 螺旋弹幕的旋转相位
         self.effects: list[Effect] = []
         self.phase_timer = config.BOSS_PHASE_TIME_LIMIT
         self.boss_flash = 0.0            # Boss 受击闪白计时
         self.graze_fx_cooldown = 0.0     # 擦弹特效的节流，避免刷屏
+        self.boss_ceremony_timer = 0.0   # 最终 Boss 击破仪式的剩余时间
+        self.screen_shake = 0.0          # 屏幕震动幅度（像素）
         self.field_vignette = _build_vignette(
             (config.PLAYFIELD_WIDTH, config.PLAYFIELD_HEIGHT)
         )
@@ -288,27 +474,87 @@ class Game:
             elif event.type == pygame.KEYDOWN:
                 self._handle_keydown(event.key)
 
+    def _menu_items(self) -> tuple[str, ...]:
+        """根据通关状态返回标题菜单项（通关后追加「日后谈」）。"""
+        return self.MENU_ITEMS_CLEARED if self.all_cleared else self.MENU_ITEMS
+
     def _handle_keydown(self, key: int) -> None:
         if self.scene == self.SCENE_TITLE:
+            items = self._menu_items()
             if key == pygame.K_UP:
-                self.menu_selection = (self.menu_selection - 1) % len(self.MENU_ITEMS)
+                self.menu_selection = (self.menu_selection - 1) % len(items)
                 self.audio.play("menu_move")
             elif key == pygame.K_DOWN:
-                self.menu_selection = (self.menu_selection + 1) % len(self.MENU_ITEMS)
+                self.menu_selection = (self.menu_selection + 1) % len(items)
                 self.audio.play("menu_move")
             elif key in (pygame.K_RETURN, pygame.K_KP_ENTER):
                 self.audio.play("menu_ok")
-                if self.menu_selection == 0:
-                    self._reset_run()
-                    self.scene = self.SCENE_PLAYING
-                elif self.menu_selection == 1:
+                label = items[self.menu_selection]
+                if label == "开始游戏":
+                    self.stage_select_index = 0
+                    self.scene = self.SCENE_STAGE_SELECT
+                elif label == "操作说明":
                     self.manual_page = 0
                     self.scene = self.SCENE_CONTROLS
+                elif label == "日后谈":
+                    self.afterword_only = True
+                    self.ending_page = 1       # 从后记页开始翻阅
+                    self.scene = self.SCENE_AFTERWORD
+                elif label == "紅霧人物録":
+                    self.cg_gallery_index = 0
+                    self.scene = self.SCENE_CG_GALLERY
                 else:
                     self.running = False
             elif key == pygame.K_ESCAPE:
                 self.audio.play("menu_cancel")
                 self.running = False
+            return
+
+        if self.scene == self.SCENE_STAGE_SELECT:
+            if key == pygame.K_UP:
+                self.stage_select_index = max(0, self.stage_select_index - 1)
+                self.audio.play("menu_move")
+            elif key == pygame.K_DOWN:
+                self.stage_select_index = min(
+                    config.STAGE_COUNT - 1, self.stage_select_index + 1
+                )
+                self.audio.play("menu_move")
+            elif key in (pygame.K_RETURN, pygame.K_KP_ENTER):
+                if self.stage_select_index < self.unlocked_stage:
+                    self.audio.play("menu_ok")
+                    self._reset_run(self.stage_select_index)
+                    self.scene = self.SCENE_PLAYING
+                else:
+                    self.audio.play("menu_cancel")
+            elif key == pygame.K_ESCAPE:
+                self.audio.play("menu_cancel")
+                self.scene = self.SCENE_TITLE
+                self.menu_selection = 0
+            return
+
+        if self.scene == self.SCENE_AFTERWORD:
+            # 日后谈独立翻阅：沿用 ending_page，覆盖 result/afterword/credits 三页
+            min_page = 1 if getattr(self, "afterword_only", False) else 0
+            if key in (pygame.K_LEFT, pygame.K_a):
+                if self.ending_page > min_page:
+                    self.ending_page -= 1
+                    self.audio.play("menu_move")
+            elif key in (pygame.K_RIGHT, pygame.K_d):
+                if self.ending_page < len(self.ENDING_PAGES) - 1:
+                    self.ending_page += 1
+                    self.audio.play("menu_move")
+            elif key in (pygame.K_RETURN, pygame.K_KP_ENTER):
+                if self.ending_page < len(self.ENDING_PAGES) - 1:
+                    self.ending_page += 1
+                    self.audio.play("menu_ok")
+                else:
+                    self.audio.play("menu_cancel")
+                    self.afterword_only = False
+                    self.scene = self.SCENE_TITLE
+            elif key == pygame.K_ESCAPE:
+                self.audio.play("menu_cancel")
+                self.afterword_only = False
+                self.scene = self.SCENE_TITLE
             return
 
         if self.scene == self.SCENE_CONTROLS:
@@ -321,6 +567,44 @@ class Game:
                 if page != self.manual_page:
                     self.manual_page = page
                     self.audio.play("menu_move")
+            return
+
+        if self.scene == self.SCENE_CG_GALLERY:
+            total = len(self.CG_GALLERY_ENTRIES)
+            if self.cg_detail_active:
+                # 详情页：← → 切换该角色的多张 CG，Esc 返回列表
+                entry = self.CG_GALLERY_ENTRIES[self.cg_gallery_index]
+                portrait_group = self.art.portraits.get(entry[0])
+                cg_count = len(portrait_group) if portrait_group else 1
+                if key in (pygame.K_LEFT, pygame.K_a):
+                    if self.cg_detail_cg_index > 0:
+                        self.cg_detail_cg_index -= 1
+                        self.audio.play("menu_move")
+                elif key in (pygame.K_RIGHT, pygame.K_d):
+                    if self.cg_detail_cg_index < cg_count - 1:
+                        self.cg_detail_cg_index += 1
+                        self.audio.play("menu_move")
+                elif key in (pygame.K_ESCAPE, pygame.K_RETURN, pygame.K_KP_ENTER):
+                    self.cg_detail_active = False
+                    self.cg_detail_cg_index = 0
+                    self.audio.play("menu_cancel")
+            else:
+                # 列表页：← → 切换角色，Enter 进入详情页
+                if key in (pygame.K_LEFT, pygame.K_a):
+                    if self.cg_gallery_index > 0:
+                        self.cg_gallery_index -= 1
+                        self.audio.play("menu_move")
+                elif key in (pygame.K_RIGHT, pygame.K_d):
+                    if self.cg_gallery_index < total - 1:
+                        self.cg_gallery_index += 1
+                        self.audio.play("menu_move")
+                elif key in (pygame.K_RETURN, pygame.K_KP_ENTER):
+                    self.cg_detail_active = True
+                    self.cg_detail_cg_index = 0
+                    self.audio.play("menu_ok")
+                elif key == pygame.K_ESCAPE:
+                    self.audio.play("menu_cancel")
+                    self.scene = self.SCENE_TITLE
             return
 
         if self.game_over:
@@ -362,15 +646,50 @@ class Game:
 
         if key == pygame.K_ESCAPE:
             self.running = False
-        elif key == pygame.K_z:
+            return
+        director = getattr(self, "director", None)
+        if director is not None and director.waiting_dialogue:
+            # 对话进行中：Z / Enter / 空格 先补全本行，再推进到下一句
+            if key in (pygame.K_z, pygame.K_RETURN, pygame.K_KP_ENTER,
+                       pygame.K_SPACE):
+                self.audio.play("menu_move")
+                director.advance_dialogue()
+            return
+        if key == pygame.K_z:
             self.shoot_requested = True
+        elif key == pygame.K_x:
+            self._use_bomb()
         elif key == pygame.K_F1:
             self.paused = not self.paused
         elif key == pygame.K_F2:
             self.debug_overlay = not self.debug_overlay
         elif key == pygame.K_F3:
-            self.god_mode = not self.god_mode
-            self.audio.play("menu_ok")
+            # F3：已开启无敌时直接关闭；未开启时弹出密码输入框
+            if getattr(self, "god_mode", False):
+                self.god_mode = False
+                self.audio.play("menu_cancel")
+            else:
+                self.cheat_prompt_active = True
+                self.cheat_input = ""
+                self.audio.play("menu_ok")
+            return
+        # 作弊密码输入中：只接受数字键
+        if getattr(self, "cheat_prompt_active", False):
+            if pygame.K_0 <= key <= pygame.K_9:
+                self.cheat_input += chr(key)
+                self.audio.play("menu_move")
+                if len(self.cheat_input) >= len(self.CHEAT_PASSWORD):
+                    if self.cheat_input == self.CHEAT_PASSWORD:
+                        self.god_mode = not self.god_mode
+                        self.audio.play("menu_ok")
+                    else:
+                        self.audio.play("menu_cancel")
+                    self.cheat_prompt_active = False
+                    self.cheat_input = ""
+            elif key in (pygame.K_ESCAPE, pygame.K_BACKSPACE):
+                self.cheat_prompt_active = False
+                self.cheat_input = ""
+            return
 
     def _read_player_input(self) -> tuple[bool, bool]:
         """读取玩家移动、低速和射击输入。"""
@@ -416,156 +735,128 @@ class Game:
             self.audio.play("shot")
             self.fire_timer = config.PLAYER_FIRE_INTERVAL
 
-    def _boss_attack_origin(self) -> Vector2:
+    def _boss_attack_origin(self, boss: Boss) -> Vector2:
         """返回立绘身体处的弹幕发射点，区别于 Boss 立绘的脸部中心。"""
-        return self.boss.pos + Vector2(*config.BOSS_ATTACK_ORIGIN_OFFSET)
+        return boss.pos + Vector2(*config.BOSS_ATTACK_ORIGIN_OFFSET)
 
-    def _spawn_boss_attack(self) -> None:
-        """按 Boss 阶段发射扇形瞄准弹、环形混合弹幕或旋转螺旋。"""
-        art = self.art
-        origin = self._boss_attack_origin()
-        if self.boss.phase == 1:
-            direction = self.player.pos - origin
-            if direction.length_squared() == 0:
-                direction = Vector2(0.0, 1.0)
-            base_angle = math.atan2(direction.y, direction.x)
-            middle = (config.BOSS_FAN_COUNT - 1) / 2
-            for i in range(config.BOSS_FAN_COUNT):
-                offset = (i - middle) * math.radians(config.BOSS_FAN_STEP_DEGREES)
-                angle = base_angle + offset
-                cyan_side = i % 2 == 1
-                self.bullets.append(Bullet(
-                    origin.x,
-                    origin.y,
-                    math.cos(angle) * config.BOSS_ATTACK_SPEED,
-                    math.sin(angle) * config.BOSS_ATTACK_SPEED,
-                    radius=config.BULLET_SMALL_RADIUS,
-                    color=config.CYAN if cyan_side else config.RED,
-                    sprite=art.bullet_small["blue" if cyan_side else "red"],
-                ))
-            return
+    def _spawn_boss(self, spec) -> None:
+        """按 director 给出的规格生成 Boss，并复位符卡计时。"""
+        self.boss = Boss(config.BOSS_START_X, config.BOSS_START_Y, spec)
+        self.boss_attack_phase = 0
+        self.spell_timers = []
+        self.phase_timer = config.BOSS_PHASE_TIME_LIMIT
+        self.boss_flash = 0.0
+        self.spell_imperilled = False
+        self.spell_timed_out = False
+        self.spell_announce_timer = 0.0
 
-        if self.boss.phase == 2:
-            # 阶段 2：外圈大玉 + 内圈交错的小玉，形成双层环形弹幕
-            for i in range(config.BOSS_RING_COUNT):
-                angle = math.tau * i / config.BOSS_RING_COUNT
-                self.bullets.append(Bullet(
-                    origin.x,
-                    origin.y,
-                    math.cos(angle) * config.BOSS_ATTACK_SPEED,
-                    math.sin(angle) * config.BOSS_ATTACK_SPEED,
-                    radius=config.BULLET_LARGE_RADIUS,
-                    color=config.MAGENTA,
-                    sprite=art.bullet_large["magenta"],
-                ))
+    def _spawn_boss_attack(self, boss: Boss, emitter) -> None:
+        """铺开一个发射器描述的一轮弹幕。
 
-            small_count = config.BOSS_RING_COUNT * 2
-            for i in range(small_count):
-                angle = math.tau * i / small_count + math.pi / small_count
-                speed = config.BOSS_ATTACK_SPEED * 0.72
-                self.bullets.append(Bullet(
-                    origin.x,
-                    origin.y,
-                    math.cos(angle) * speed,
-                    math.sin(angle) * speed,
-                    radius=config.BULLET_SMALL_RADIUS,
-                    color=config.WHITE,
-                    sprite=art.bullet_small["white"],
-                ))
-            return
-
-        # 阶段 3：多臂旋转螺旋 + 一圈随机散射
-        step = math.tau / config.BOSS_SPIRAL_ARMS
-        for i in range(config.BOSS_SPIRAL_ARMS):
-            angle = self.spiral_angle + i * step
-            self.bullets.append(Bullet(
-                origin.x,
-                origin.y,
-                math.cos(angle) * config.BOSS_ATTACK_SPEED,
-                math.sin(angle) * config.BOSS_ATTACK_SPEED,
-                radius=config.BULLET_SMALL_RADIUS,
-                color=config.PURPLE,
-                sprite=art.bullet_small["blue"],
-            ))
-        self.spiral_angle = (
-            self.spiral_angle + math.radians(config.BOSS_SPIRAL_STEP_DEGREES)
-        ) % math.tau
-
-        for _ in range(config.BOSS_SCATTER_COUNT):
-            angle = random.uniform(0.0, math.tau)
-            speed = random.uniform(
-                config.BOSS_SCATTER_SPEED_MIN, config.BOSS_SCATTER_SPEED_MAX
-            )
-            self.bullets.append(Bullet(
-                origin.x,
-                origin.y,
-                math.cos(angle) * speed,
-                math.sin(angle) * speed,
-                radius=config.BULLET_LARGE_RADIUS,
-                color=config.MAGENTA,
-                sprite=art.bullet_large["magenta"],
-            ))
+        形状与角度交给 :func:`spells.emit`，这里只把结果并入弹幕列表，并在
+        带有 ``spin`` 的环形 / 螺旋上累加整体相位，让弹幕逐轮旋转起来。
+        """
+        origin = self._boss_attack_origin(boss)
+        self.bullets.extend(spells.emit(
+            emitter, self.art, origin, self.player.pos, boss.spell_angle
+        ))
+        if emitter.spin:
+            boss.spell_angle = (
+                boss.spell_angle + math.radians(emitter.spin)
+            ) % math.tau
 
     def _update_boss_attacks(self, dt: float) -> None:
-        """按阶段发射弹幕；符卡限时耗尽则强制推进到下一阶段。"""
-        if not self.boss.alive:
+        """推进当前符卡：各发射器独立冷却，限时耗尽则强制结束本张符卡。"""
+        boss = self.boss
+        if boss is None or not boss.alive:
             return
 
-        phase = self.boss.phase
-        interval = {
-            1: config.BOSS_PHASE1_INTERVAL,
-            2: config.BOSS_PHASE2_INTERVAL,
-        }.get(phase, config.BOSS_PHASE3_INTERVAL)
-        if phase != self.boss_attack_phase:
-            self.boss_attack_phase = phase
-            self.boss_attack_timer = interval
-            self.phase_timer = config.BOSS_PHASE_TIME_LIMIT
-            if phase > 1:
-                self.score += config.PHASE_SCORE
-                self.audio.play("phase_change")
-                # 每进入新阶段掉落一批火力道具；第三段额外给一个 1UP
-                self._spawn_items(
-                    self.boss.pos.x, self.boss.pos.y, "power",
-                    config.BOSS_PHASE_DROP_POWER,
-                )
-                if phase == 3:
-                    self._spawn_items(
-                        self.boss.pos.x, self.boss.pos.y + 44.0, "life", 1
-                    )
+        spell = boss.spell
+        if boss.phase != self.boss_attack_phase:
+            self._enter_spell(boss, spell, self.phase_timer)
 
         self.phase_timer = max(0.0, self.phase_timer - dt)
         if self.phase_timer <= 0.0:
             self._force_phase_end()
             return
 
-        self.boss_attack_timer -= dt
-        if self.boss_attack_timer > 0.0:
-            return
+        for index, emitter in enumerate(spell.emitters):
+            self.spell_timers[index] -= dt
+            if self.spell_timers[index] > 0.0:
+                continue
+            self._spawn_boss_attack(boss, emitter)
+            self.spell_timers[index] = emitter.interval
 
-        self._spawn_boss_attack()
-        self.boss_attack_timer = interval
+    def _enter_spell(self, boss: Boss, spell, remaining: float) -> None:
+        """切换到一张符卡：结算上一张的成败，重置计时并按需掉落道具。
+
+        ``remaining`` 是被终结的那张符卡的剩余时间，用于计算时间加成；首张
+        符卡没有「上一张」，因此不结算。
+        """
+        previous = self.boss_attack_phase
+        self.boss_attack_phase = boss.phase
+        self.spell_timers = spell.cooldowns()
+        self.phase_timer = spell.duration
+        boss.spell_angle = 0.0
+        # 展开新符卡时弹出符卡名与技能描述，贴近原作的符卡宣告
+        self.spell_announce_timer = config.SPELL_ANNOUNCE_DURATION
+        if previous <= 0:
+            return
+        self._settle_spell(remaining)
+        self.audio.play("phase_change")
+        self.effects.append(Effect(
+            boss.pos.x, boss.pos.y, self.art.boss_burst,
+            config.BURST_DURATION, start_scale=0.3, end_scale=1.0,
+        ))
+        # 每展开一张新符卡掉一批火力道具；最后一张额外给一个 1UP
+        self._spawn_items(
+            boss.pos.x, boss.pos.y, "power", config.BOSS_PHASE_DROP_POWER
+        )
+        if boss.phase == boss.spell_count:
+            self._spawn_items(boss.pos.x, boss.pos.y + 44.0, "life", 1)
+
+    def _settle_spell(self, remaining: float) -> None:
+        """结算刚结束的一张符卡。
+
+        原作规则：只有在限时内、且全程未被击中也没用灵击，才算「取得」并拿到
+        时间加成；被击中、灵击或超时都记为失败，不给分。
+        """
+        if self.spell_imperilled or self.spell_timed_out:
+            self.spells_failed += 1
+            self.audio.play("menu_cancel")
+        else:
+            self.spells_captured += 1
+            self.score += (config.BOSS_SPELL_BASE_BONUS
+                           + config.BOSS_SPELL_TIME_BONUS
+                           * int(max(0.0, remaining)))
+            self.audio.play("menu_ok")
+        self.spell_imperilled = False
+        self.spell_timed_out = False
 
     def _force_phase_end(self) -> None:
-        """符卡倒计时归零：把当前阶段直接推到尽头。
+        """符卡倒计时归零：把当前符卡直接推到尽头。
 
-        前两段超时即降到本段末尾（进入下一段），最后一段超时视为 Boss 被击破，
-        与原作「符卡时间到即结束该符卡」的处理一致。
+        非最后一张超时即降到本段末尾（转入下一张），最后一张超时视为 Boss
+        被击破，与原作「符卡时间到即结束该符卡」的处理一致；超时不结算取得。
         """
-        segment = self.boss.max_hp / 3.0
-        phase = self.boss.phase
-        if phase == 1:
-            self.boss.hp = min(self.boss.hp, segment * 2.0 - 1.0)
-            self.phase_timer = config.BOSS_PHASE_TIME_LIMIT
-        elif phase == 2:
-            self.boss.hp = min(self.boss.hp, segment - 1.0)
-            self.phase_timer = config.BOSS_PHASE_TIME_LIMIT
+        boss = self.boss
+        if boss is None:
+            return
+        self.spell_timed_out = True
+        spell_count = boss.spell_count
+        segment = boss.max_hp / spell_count
+        if boss.phase < spell_count:
+            boss.hp = min(
+                boss.hp, segment * (spell_count - boss.phase) - 1.0
+            )
+            self.phase_timer = 0.0
         else:
-            self.boss.hp = 0.0
-            self.boss.alive = False
+            boss.hp = 0.0
+            boss.alive = False
 
     def _check_boss_collisions(self) -> None:
         """用相对运动线段检测玩家弹与移动 Boss 的碰撞。"""
-        if self.boss.alive:
+        if self.boss is not None and self.boss.alive:
             for shot in self.player_shots:
                 if not shot.alive:
                     continue
@@ -591,7 +882,7 @@ class Game:
                         break
 
         self.player_shots = [shot for shot in self.player_shots if shot.alive]
-        if not self.boss.alive:
+        if self.boss is not None and not self.boss.alive:
             self._on_boss_defeated()
 
     def _check_fairy_collisions(self) -> None:
@@ -628,7 +919,7 @@ class Game:
         self.fairies = [fairy for fairy in self.fairies if fairy.alive]
 
     def _on_fairy_defeated(self, fairy: Fairy) -> None:
-        """击破妖精：轮换掉落 POINT/POWER，并低概率掉落 LIFE。"""
+        """击破妖精：按波次指定掉落，缺省时轮换 POINT/POWER 并低概率掉 LIFE。"""
         self.audio.play("enemy_dead")
         self.effects.append(Effect(
             fairy.pos.x, fairy.pos.y, self.art.boss_burst,
@@ -636,7 +927,9 @@ class Game:
             start_alpha=200, end_alpha=0,
         ))
         self.fairy_kill_count += 1
-        if random.random() < config.FAIRY_LIFE_DROP_CHANCE:
+        if fairy.drop is not None:
+            kind = fairy.drop
+        elif random.random() < config.FAIRY_LIFE_DROP_CHANCE:
             kind = "life"
         else:
             pattern = config.FAIRY_DROP_PATTERN
@@ -673,16 +966,17 @@ class Game:
         self.audio.play("menu_ok")
 
     def _update_items(self, dt: float) -> None:
-        """推进道具：靠近自机时改为磁吸方向，接触后拾取，出屏回收。"""
+        """推进道具：靠近自机时磁吸，越过回收线时全屏吸入，接触后拾取。"""
+        collect_all = self.player.pos.y <= config.ITEM_COLLECT_LINE
         for item in self.items:
             if not item.alive:
                 continue
             offset = self.player.pos - item.pos
             distance = offset.length()
-            if 0.0 < distance <= config.ITEM_MAGNET_RADIUS:
-                item.vel = offset * (config.ITEM_MAGNET_SPEED / distance)
-            elif distance == 0.0:
+            if distance == 0.0:
                 item.vel = Vector2(0.0, 0.0)
+            elif collect_all or distance <= config.ITEM_MAGNET_RADIUS:
+                item.vel = offset * (config.ITEM_MAGNET_SPEED / distance)
             else:
                 item.vel = Vector2(0.0, config.ITEM_FALL_SPEED)
             item.update(dt)
@@ -691,18 +985,61 @@ class Game:
         self.items = [item for item in self.items if item.alive]
 
     def _on_boss_defeated(self) -> None:
-        """击破 Boss：结算分数、播放大爆特效并清空弹幕。"""
-        self.score += config.VICTORY_SCORE
+        """击破 Boss：结算符卡与分数、播放大爆特效并清空弹幕，随后回报 director。
+
+        中 Boss 只是关卡中的一道关卡，击破后立刻让出场地；关底 Boss 击破后
+        由 director 接手推进后续对话、关卡结算与结局。最终关的关底 Boss 击破
+        时会触发一段「异变终结」仪式：白闪、震屏、慢动作粒子与大字卡，
+        推迟 director 的推进直到仪式播完。
+        """
+        boss = self.boss
+        if boss is None:
+            return
+        # 最后一张符卡在「换符卡」时不会被结算，这里补上
+        self._settle_spell(self.phase_timer)
+        self.score += (config.MIDBOSS_SCORE if boss.midboss
+                       else config.VICTORY_SCORE)
         self.audio.play("enemy_dead")
-        self._register_hiscore()
         self.effects.append(Effect(
-            self.boss.pos.x, self.boss.pos.y, self.art.boss_burst,
+            boss.pos.x, boss.pos.y, self.art.boss_burst,
             config.BURST_DURATION, start_scale=0.4, end_scale=1.3,
         ))
-        self.victory = True
-        self.ending_page = 0
         self.bullets.clear()
         self.player_shots.clear()
+        self.boss = None
+        self.spell_timers = []
+        self.phase_timer = config.BOSS_PHASE_TIME_LIMIT
+        self._register_hiscore()
+
+        is_final_boss = (
+            not boss.midboss
+            and self.director.stage_number >= config.STAGE_COUNT
+        )
+        if is_final_boss:
+            # 最终 Boss 击破仪式：环形爆发 + 多段闪光 + 强震屏
+            cx, cy = boss.pos.x, boss.pos.y
+            ring_count = 10
+            for i in range(ring_count):
+                angle = 2.0 * math.pi * i / ring_count
+                radius = 70.0
+                self.effects.append(Effect(
+                    cx + math.cos(angle) * radius,
+                    cy + math.sin(angle) * radius,
+                    self.art.boss_burst, config.BURST_DURATION * 1.8,
+                    start_scale=0.4, end_scale=2.4,
+                ))
+            for offset in ((-60, -30), (60, -20), (0, 40), (-40, 50), (50, 30)):
+                self.effects.append(Effect(
+                    boss.pos.x + offset[0], boss.pos.y + offset[1],
+                    self.art.boss_burst, config.BURST_DURATION * 1.6,
+                    start_scale=0.5, end_scale=2.2,
+                ))
+            self.boss_ceremony_timer = 3.6
+            self.screen_shake = 18.0
+            return
+        director = getattr(self, "director", None)
+        if director is not None:
+            director.notify_boss_defeated()
 
     def _register_hiscore(self) -> None:
         """刷新并持久化最高分（无写权限时静默忽略）。"""
@@ -710,44 +1047,93 @@ class Game:
             self.hiscore = self.score
             _save_hiscore(self.hiscore)
 
-    def _reset_run(self) -> None:
-        """重置玩家、Boss、弹幕、计时器与本局统计。"""
+    def _reset_run(self, stage_index: int = 0) -> None:
+        """从头开始一局：复位 director 与全部战斗状态。
+
+        ``stage_index`` 为 0 起的关卡序号，决定从哪一关开始；关卡选择界面
+        据此让玩家重玩已解锁的任意一关。
+        """
         self.player = Player(config.PLAYER_START_X, config.PLAYER_START_Y)
-        self.boss = Boss(config.BOSS_START_X, config.BOSS_START_Y)
+        self.boss = None
         self.bullets.clear()
         self.player_shots.clear()
         self.grid.clear()
         self.shooting = False
         self.shoot_requested = False
         self.fire_timer = 0.0
-        self.boss_attack_timer = config.BOSS_PHASE1_INTERVAL
-        self.boss_attack_phase = self.boss.phase
+        self.boss_attack_phase = 0
+        self.spell_timers = []
+        self.spell_imperilled = False
+        self.spell_timed_out = False
+        self.spells_captured = 0
+        self.spells_failed = 0
+        self.awarded_clear = 0
+        self.spell_announce_timer = 0.0
         self.graze_total = 0
         self.hit_total = 0
         self.hit_flash = 0.0
         self.score = 0                 # 单局分数重置，最高分保留
         self.power = config.PLAYER_POWER_START
         self.item_total = 0
-        self.spiral_angle = 0.0
         self.effects.clear()
         self.items.clear()
         self.fairies.clear()
         self.fairy_kill_count = 0
-        self.fairy_timer = config.FAIRY_SPAWN_MIN
         self.phase_timer = config.BOSS_PHASE_TIME_LIMIT
         self.boss_flash = 0.0
         self.graze_fx_cooldown = 0.0
+        self.boss_ceremony_timer = 0.0
+        self.screen_shake = 0.0
         self.lives = config.PLAYER_LIVES
         self.invulnerable_timer = 0.0
+        self.bombs = config.PLAYER_BOMB_START
+        self.bomb_timer = 0.0
         self.focus = False
         self.paused = False
         self.victory = False
         self.ending_page = 0
         self.game_over = False
-        self.entry_card_timer = self.ENTRY_CARD_DURATION
         self.scene = self.SCENE_PLAYING
         self.animation_timer = 0.0
-        self.audio.play("alert")
+        self.director = StageDirector(start_stage=stage_index)
+        self.director.reset()
+        self.director.start()
+
+    def _use_bomb(self) -> None:
+        """灵击（Bomb）：消耗一枚符卡，清去身边弹幕并获得短暂无敌。
+
+        与「被击中即清屏」不同，这是玩家主动的保命手段：消去的子弹会折算
+        分数，并少量化作点数道具，用来换取有限的火力补给。
+        """
+        if (self.bombs <= 0 or self.bomb_timer > 0.0
+                or self.game_over or self.victory or self.paused):
+            return
+        self.bombs -= 1
+        self.bomb_timer = config.PLAYER_BOMB_DURATION
+        self.invulnerable_timer = max(
+            self.invulnerable_timer, config.PLAYER_BOMB_DURATION
+        )
+        # 用灵击保命，代价是当前符卡失去「取得」资格
+        self.spell_imperilled = True
+        self.audio.play("phase_change")
+        self.effects.append(Effect(
+            self.player.pos.x, self.player.pos.y, self.art.boss_burst,
+            config.BURST_DURATION, start_scale=0.25, end_scale=1.7,
+            start_alpha=190, end_alpha=0,
+        ))
+        cleared, kept = 0, []
+        for bullet in self.bullets:
+            if bullet.pos.distance_to(self.player.pos) <= config.PLAYER_BOMB_RADIUS:
+                cleared += 1
+            else:
+                kept.append(bullet)
+        self.bullets = kept
+        self.score += cleared * config.PLAYER_BOMB_BULLET_SCORE
+        drops = min(cleared // 4, config.PLAYER_BOMB_CLEAR_ITEM_CAP)
+        if drops > 0:
+            self._spawn_items(
+                self.player.pos.x, self.player.pos.y, "point", drops
+            )
 
     def _check_collisions(self) -> None:
         """双层判定：擦弹区（外层，不致命）/ 命中区（内层，致命）。
@@ -818,6 +1204,9 @@ class Game:
         self.hit_total += 1
         self.hit_flash = 0.25
         self.audio.play("player_dead")
+        # 被击中会让当前符卡失去「取得」资格
+        if self.boss is not None and self.boss.alive:
+            self.spell_imperilled = True
         self.lives -= 1
         self.bullets.clear()
         self.effects.append(Effect(
@@ -835,6 +1224,8 @@ class Game:
             self.hit_flash = 0.0
             self.player_shots.clear()
             self.shooting = False
+            # 本局到此结束：失败局的新高分同样要写入存档
+            self._register_hiscore()
         else:
             self.invulnerable_timer = config.PLAYER_INVULNERABLE_TIME
 
@@ -845,42 +1236,85 @@ class Game:
         self.effects = [effect for effect in self.effects if effect.alive]
 
     def _update_fairies(self, dt: float) -> None:
-        """定时生成可击破妖精，混用原作两组妖精动画。"""
-        self.fairy_timer -= dt
-        if self.fairy_timer <= 0.0:
-            self.fairy_timer = random.uniform(
-                config.FAIRY_SPAWN_MIN, config.FAIRY_SPAWN_MAX
-            )
-            self.fairies.append(Fairy(
-                random.uniform(config.PLAYFIELD_LEFT + 80,
-                               config.PLAYFIELD_RIGHT - 80),
-                config.PLAYFIELD_TOP - 30.0,
-                random.uniform(config.FAIRY_SPEED_MIN, config.FAIRY_SPEED_MAX),
-                random.uniform(config.FAIRY_SWAY_MIN, config.FAIRY_SWAY_MAX),
-                variant=random.random() < config.FAIRY_VARIANT_CHANCE,
-            ))
+        """推进杂兵并回收出屏者；带弹型的杂兵在场地内按冷却开火。
+
+        妖精的生成时机不再由计时器决定，而是由 :class:`~src.director.StageDirector`
+        按关卡波次脚本投放，这里只负责推进与回收，和原作「编队压上」一致。
+        """
+        fired: list[Bullet] = []
         for fairy in self.fairies:
             fairy.update(dt)
+            if (fairy.attack is not None and fairy.alive
+                    and fairy.state != "leave"
+                    and fairy.pos.y >= config.PLAYFIELD_TOP
+                    and fairy.fire_timer <= 0.0):
+                fired.extend(spells.emit(
+                    fairy.attack, self.art, fairy.pos, self.player.pos
+                ))
+                fairy.fire_timer = fairy.attack.interval
+        if fired:
+            self.bullets.extend(fired)
         self.fairies = [fairy for fairy in self.fairies if fairy.alive]
 
     def _update_music(self) -> None:
-        """按当前场景切换循环背景音乐；同一首不会被打断重来。"""
+        """按当前场景与流程状态切换循环背景音乐；同一首不会被打断重来。
+
+        每个关卡与每个 Boss 都有独立的 TH06 原作曲目；若 MIDI 不可用则
+        自动降级到旧版 PC-98 OGG。
+        """
+        if self.scene == self.SCENE_STAGE_SELECT:
+            self.audio.play_music("stage_select")
+            return
         if self.scene in (self.SCENE_TITLE, self.SCENE_CONTROLS):
             self.audio.play_music("title")
-        elif self.scene == self.SCENE_PLAYING:
-            if self.victory:
-                self.audio.play_music("ending")
-            elif self.game_over:
-                self.audio.play_music("boss" if self.boss.phase >= 3 else "stage")
+            return
+        if self.scene == self.SCENE_CG_GALLERY:
+            self.audio.play_music("ending")
+            return
+        if self.scene == self.SCENE_AFTERWORD:
+            if getattr(self, "ending_page", 0) >= len(self.ENDING_PAGES) - 1:
+                self.audio.play_music("credits")
             else:
-                # 最终符卡换成 Boss 曲，前两段用关卡曲
-                self.audio.play_music("boss" if self.boss.phase >= 3 else "stage")
+                self.audio.play_music("ending")
+            return
+        if self.scene != self.SCENE_PLAYING:
+            return
+        if self.victory:
+            # 胜利流程：afterword 用结局曲，credits 用鸣谢曲
+            if getattr(self, "ending_page", 0) >= len(self.ENDING_PAGES) - 1:
+                self.audio.play_music("credits")
+            else:
+                self.audio.play_music("ending")
+            return
+        # 最终 Boss 击破仪式：播 U.N.OWEN 这首最知名的东方曲
+        if getattr(self, "boss_ceremony_timer", 0.0) > 0.0:
+            self.audio.play_music("ceremony")
+            return
+        director = getattr(self, "director", None)
+        if director is None:
+            return
+        # Boss 战：按 Boss 切换专属曲目
+        if director.state == FIGHT and self.boss is not None:
+            key = self.boss.spec.key
+            boss_music = {
+                "rumia": "boss_rumia",
+                "cirno": "boss_cirno",
+                "remilia": "boss_remilia",
+            }.get(key)
+            if boss_music:
+                self.audio.play_music(boss_music)
+                return
+        # 非战斗：按关卡切换关卡曲
+        stage_music = {1: "stage1", 2: "stage2", 3: "stage3"}.get(
+            director.stage_number, "stage1"
+        )
+        self.audio.play_music(stage_music)
 
     def update(self, dt: float) -> None:
         self._update_music()
         if self.scene != self.SCENE_PLAYING:
             return
-        if self.paused:
+        if self.paused or getattr(self, "cheat_prompt_active", False):
             self.shoot_requested = False
             return
         if self.victory or self.game_over:
@@ -889,14 +1323,60 @@ class Game:
             self._advance_effects(dt)
             self.hit_flash = max(0.0, self.hit_flash - dt)
             return
-        if getattr(self, "entry_card_timer", 0.0) > 0.0:
-            self.entry_card_timer = max(0.0, self.entry_card_timer - dt)
+
+        self._advance_effects(dt)
+        self.boss_flash = max(0.0, self.boss_flash - dt)
+        self.bomb_timer = max(0.0, self.bomb_timer - dt)
+
+        # 最终 Boss 击破仪式：白闪消退、震屏衰减、慢动作播放粒子，结束后才推进剧情
+        if getattr(self, "boss_ceremony_timer", 0.0) > 0.0:
+            ceremony_dt = dt * 0.35          # 慢动作：粒子以 35% 速度推进
+            for effect in self.effects:
+                effect.update(ceremony_dt)
+            self.boss_ceremony_timer = max(0.0, self.boss_ceremony_timer - dt)
+            self.screen_shake = max(0.0, self.screen_shake - dt * 40.0)
+            self.shoot_requested = False
+            if self.boss_ceremony_timer <= 0.0:
+                self.screen_shake = 0.0
+                director = getattr(self, "director", None)
+                if director is not None:
+                    director.notify_boss_defeated()
+            return
+
+        # 关卡推进：过场 / 对话 / 波次 / 战斗 / 结算全由 director 编排
+        self.fairies.extend(
+            self.director.update(dt, len(self.fairies))
+        )
+        spec = self.director.take_boss()
+        if spec is not None:
+            self._spawn_boss(spec)
+        if self.director.cleared_stage > self.awarded_clear:
+            # 每通过一关发一次通关奖励（原作「ステージクリア」结算）
+            self.awarded_clear = self.director.cleared_stage
+            self.score += config.STAGE_CLEAR_BONUS
+        if self.director.completed:
+            # 单关结束：解锁下一关并保存进度；最终关才进入结局
+            cleared = self.director.stage_number
+            if cleared >= self.unlocked_stage and cleared < config.STAGE_COUNT:
+                self.unlocked_stage = cleared + 1
+            if cleared >= config.STAGE_COUNT:
+                self.all_cleared = True
+            _save_progress(self.unlocked_stage, self.all_cleared)
+            self._register_hiscore()
+            if cleared >= config.STAGE_COUNT:
+                self.victory = True
+            else:
+                self.stage_select_index = min(
+                    self.stage_select_index, self.unlocked_stage - 1
+                )
+                self.scene = self.SCENE_STAGE_SELECT
+            return
+        if self.director.state in (BANNER, TALK):
+            # 过场与对话期间冻结弹幕场，只让已有效果播完
             self.shoot_requested = False
             return
 
-        self._advance_effects(dt)
         self.invulnerable_timer = max(0.0, self.invulnerable_timer - dt)
-        self.boss_flash = max(0.0, self.boss_flash - dt)
         self.graze_fx_cooldown = max(0.0, self.graze_fx_cooldown - dt)
         self.debug_stats = self._empty_debug_stats()
         self.focus, self.shooting = self._read_player_input()
@@ -915,7 +1395,7 @@ class Game:
         self._update_fairies(dt)
         self._update_items(dt)
 
-        if self.boss.alive:
+        if self.boss is not None and self.boss.alive:
             self.boss.update(dt)
         self._spawn_player_shots(dt)
         self.shoot_requested = False
@@ -927,6 +1407,8 @@ class Game:
             return
 
         self._update_boss_attacks(dt)
+        if self.spell_announce_timer > 0.0:
+            self.spell_announce_timer = max(0.0, self.spell_announce_timer - dt)
         for b in self.bullets:
             b.update(dt)
         self.bullets = [b for b in self.bullets if b.alive]
@@ -946,34 +1428,45 @@ class Game:
         if self.scene == self.SCENE_CONTROLS:
             self._draw_manual_screen()
             return
+        if self.scene == self.SCENE_STAGE_SELECT:
+            self._draw_stage_select()
+            return
+        if self.scene == self.SCENE_AFTERWORD:
+            self._draw_afterword_view()
+            return
+        if self.scene == self.SCENE_CG_GALLERY:
+            self._draw_cg_gallery()
+            return
 
         field_origin = (config.PLAYFIELD_LEFT, config.PLAYFIELD_TOP)
         self.screen.blit(self.art.scene_background, (0, 0))
-        self.screen.blit(self.art.playfield_background, field_origin)
+        backgrounds = self.art.stage_backgrounds
+        background_index = min(
+            self.director.background_index, len(backgrounds) - 1
+        )
+        self.screen.blit(backgrounds[background_index], field_origin)
         self.screen.blit(self.playfield_shade, field_origin)
         self.screen.blit(self.field_vignette, field_origin)
 
         for fairy in self.fairies:
             fairy.draw(
                 self.screen,
-                (
-                    self.art.fairy_variant_frames
-                    if fairy.variant else self.art.fairy_frames
-                ),
+                self.art.enemy_frames.get(fairy.frames_key)
+                or self.art.fairy_frames,
                 flash=fairy.hit_flash / config.BOSS_FLASH_DURATION,
             )
 
         for item in self.items:
             item.draw(self.screen, self.art.item_halo)
 
-        boss_sprite = self.art.boss_faces[
-            min(self.boss.phase, len(self.art.boss_faces)) - 1
-        ]
-        if self.boss_flash > 0.0 and self.boss.alive:
-            boss_sprite = _flash_sprite(
-                boss_sprite, self.boss_flash / config.BOSS_FLASH_DURATION
-            )
-        self.boss.draw(self.screen, boss_sprite)
+        boss = self.boss
+        if boss is not None and boss.alive:
+            boss_sprite = self._boss_sprite(boss)
+            if self.boss_flash > 0.0:
+                boss_sprite = _flash_sprite(
+                    boss_sprite, self.boss_flash / config.BOSS_FLASH_DURATION
+                )
+            boss.draw(self.screen, boss_sprite)
 
         for shot in self.player_shots:
             if shot.alive:
@@ -1009,21 +1502,39 @@ class Game:
             self._draw_debug_overlay()
 
         self._draw_phase_hud()
+        self._draw_spell_announcement()
         self._draw_hud()
 
+        director = self.director
         if self.paused:
             self._draw_pause_card()
         elif self.game_over:
             self._draw_ending(self.art.ending_defeat, victory=False)
         elif self.victory:
-            ending_background = (
-                self.art.ending_victory,
-                self.art.ending_afterword,
-                self.art.ending_credits,
-            )[self.ending_page]
+            ending_background = self._ending_background_for_page(self.ending_page)
             self._draw_ending(ending_background, victory=True)
-        elif getattr(self, "entry_card_timer", 0.0) > 0.0:
-            self._draw_entry_card()
+        elif director.state == BANNER:
+            self._draw_banner_card()
+        elif director.waiting_dialogue and director.dialogue is not None:
+            director.dialogue.draw(
+                self.screen, self.art, self.font, self.font_big
+            )
+
+        # 最终 Boss 击破仪式：震屏 + 白闪 + 「異変終結」大字卡
+        if self.boss_ceremony_timer > 0.0:
+            self._apply_screen_shake()
+            self._draw_boss_ceremony()
+
+        # 作弊密码输入框始终置顶
+        if self.cheat_prompt_active:
+            self._draw_cheat_prompt()
+
+    def _boss_sprite(self, boss: Boss) -> pygame.Surface:
+        """取当前 Boss 的立绘：按角色键取一组表情，再按符卡序号选一张。"""
+        group = self.art.hud_portraits.get(boss.spec.key)
+        if not group:
+            group = self.art.boss_faces
+        return group[min(boss.phase, len(group)) - 1]
 
     def _draw_ornate_panel(self, rect: pygame.Rect) -> None:
         """绘制半透明双线描金卡片，底图始终保留原作素材。"""
@@ -1033,63 +1544,174 @@ class Game:
         pygame.draw.rect(self.screen, config.GOLD, rect, 2)
         pygame.draw.rect(self.screen, (120, 68, 54), rect.inflate(-14, -14), 1)
 
-    def _draw_entry_card(self) -> None:
-        """开战过场：以原作场景与 Boss 立绘呈现异变和首张符卡。"""
-        progress = min(1.0, self.entry_card_timer / self.ENTRY_CARD_DURATION)
-        self.entry_shade.set_alpha(round(255 * progress))
+    def _apply_screen_shake(self) -> None:
+        """将整屏内容随机偏移，模拟击破最终 Boss 时的震屏。"""
+        magnitude = self.screen_shake
+        if magnitude <= 0.0:
+            return
+        dx = random.uniform(-magnitude, magnitude)
+        dy = random.uniform(-magnitude, magnitude)
+        snapshot = self.screen.copy()
+        self.screen.fill(config.BLACK)
+        self.screen.blit(snapshot, (round(dx), round(dy)))
+
+    def _draw_boss_ceremony(self) -> None:
+        """最终 Boss 击破仪式：白闪 + 赤红闪 + 「異変終結」大字卡 + 全符卡破却。"""
+        field = pygame.Rect(
+            config.PLAYFIELD_LEFT, config.PLAYFIELD_TOP,
+            config.PLAYFIELD_WIDTH, config.PLAYFIELD_HEIGHT,
+        )
+        total = 3.6
+        t = self.boss_ceremony_timer
+        elapsed = total - t
+
+        # 第一段：白闪（前 0.5 秒全白，之后渐隐）
+        flash_t = max(0.0, t - (total - 0.5))
+        flash_alpha = min(255, int(255 * flash_t / 0.5))
+        if flash_alpha > 0:
+            white = pygame.Surface(field.size, pygame.SRCALPHA)
+            white.fill((255, 250, 240, flash_alpha))
+            self.screen.blit(white, field.topleft)
+
+        # 第二段：赤红闪（仪式中段，约 1.6s ~ 2.2s 处浮现）
+        red_flash = 0.0
+        if 1.6 <= elapsed <= 2.2:
+            if elapsed < 1.9:
+                red_flash = (elapsed - 1.6) / 0.3
+            else:
+                red_flash = (2.2 - elapsed) / 0.3
+        red_alpha = int(180 * max(0.0, min(1.0, red_flash)))
+        if red_alpha > 0:
+            red = pygame.Surface(field.size, pygame.SRCALPHA)
+            red.fill((200, 30, 40, red_alpha))
+            self.screen.blit(red, field.topleft)
+
+        # 文字卡：仪式中段浮现，后段淡出
+        if 0.4 < t < total - 0.3:
+            fade_in = min(1.0, (total - 0.3 - t) / 0.5)
+            fade_out = min(1.0, t / 0.6)
+            alpha = int(255 * min(fade_in, fade_out))
+            cx = config.PLAYFIELD_LEFT + config.PLAYFIELD_WIDTH // 2
+            cy = config.PLAYFIELD_TOP + config.PLAYFIELD_HEIGHT // 2
+
+            title = self.font_big.render("異変終結", True, config.PALE_GOLD)
+            title.set_alpha(alpha)
+            shadow = self.font_big.render("異変終結", True, config.BLACK)
+            shadow.set_alpha(alpha)
+            self.screen.blit(shadow, shadow.get_rect(center=(cx + 3, cy + 3)))
+            self.screen.blit(title, title.get_rect(center=(cx, cy)))
+
+            sub = self.font.render(
+                "INCIDENT RESOLVED  /  紅霧散去", True, config.WHITE,
+            )
+            sub.set_alpha(alpha)
+            self.screen.blit(sub, sub.get_rect(center=(cx, cy + 56)))
+
+            # 全符卡破却：在赤红闪之后浮现
+            if elapsed > 2.0:
+                broken_alpha = int(255 * min(1.0, (elapsed - 2.0) / 0.4))
+                broken = self.font.render(
+                    "全符卡破却  /  ALL SPELL CARDS BROKEN", True, config.GOLD,
+                )
+                broken.set_alpha(min(alpha, broken_alpha))
+                self.screen.blit(broken, broken.get_rect(center=(cx, cy + 100)))
+
+    def _draw_cheat_prompt(self) -> None:
+        """作弊密码输入框：居中卡片，显示已输入的数字（用●遮掩）。"""
+        panel = pygame.Rect(config.SCREEN_W // 2 - 260, config.SCREEN_H // 2 - 90,
+                            520, 180)
+        self._draw_ornate_panel(panel)
+        cx = panel.centerx
+        self.screen.blit(
+            self.font.render("異變調查員認證  /  CHEAT CODE", True, config.MUTED),
+            self.font.render("異變調查員認證  /  CHEAT CODE", True, config.MUTED
+                             ).get_rect(center=(cx, panel.top + 40)),
+        )
+        # 密码用 ● 遮掩，已输入位数高亮
+        pwd_len = len(self.CHEAT_PASSWORD)
+        masked = " ".join("●" if i < len(self.cheat_input) else "○"
+                          for i in range(pwd_len))
+        self.screen.blit(
+            self.font_big.render(masked, True, config.PALE_GOLD),
+            self.font_big.render(masked, True, config.PALE_GOLD
+                                 ).get_rect(center=(cx, panel.top + 100)),
+        )
+        self.screen.blit(
+            self.font.render("输入 6 位密码  ·  Esc 取消", True, config.WHITE),
+            self.font.render("输入 6 位密码  ·  Esc 取消", True, config.WHITE
+                             ).get_rect(center=(cx, panel.bottom - 36)),
+        )
+
+    def _draw_banner_card(self) -> None:
+        """关卡标题过场：以横幅卡片呈现本关的舞台、中 Boss 与首领。"""
+        banner = self.director.banner
+        if banner is None:
+            return
         self.screen.blit(self.entry_shade, (0, 0))
 
         panel = pygame.Rect(158, 244, 964, 472)
         self._draw_ornate_panel(panel)
         left = panel.left + 48
         self.screen.blit(
-            self.font.render("異変調査記録  /  INCIDENT FILE 01", True, config.MUTED),
+            self.font.render(
+                f"異変調査記録  /  INCIDENT FILE {banner.stage_index:02d}",
+                True, config.MUTED,
+            ),
             (left, panel.top + 38),
         )
         self.screen.blit(
-            self.font_big.render("紅霧異変", True, config.PALE_GOLD),
+            self.font_big.render(banner.title, True, config.PALE_GOLD),
             (left, panel.top + 88),
         )
         self.screen.blit(
-            self.font.render("～ Scarlet Mist Incident ～", True, config.WHITE),
+            self.font.render(banner.subtitle, True, config.WHITE),
             (left, panel.top + 148),
         )
         pygame.draw.line(
             self.screen, config.GOLD,
             (left, panel.top + 198), (panel.right - 48, panel.top + 198), 1,
         )
-        self.screen.blit(
-            self.font.render("舞台  /  湖畔・紅魔館", True, config.PALE_GOLD),
-            (left, panel.top + 222),
-        )
-        self.screen.blit(
-            self.font.render("首領  /  蕾米莉亞·史卡雷特", True, config.WHITE),
-            (left, panel.top + 266),
-        )
-        self.screen.blit(
-            self.font.render("第一符卡  「紅符 · 猩紅射擊」", True, config.WHITE),
-            (left, panel.top + 310),
-        )
-        self.screen.blit(
-            self.art.boss_faces[0],
-            self.art.boss_faces[0].get_rect(
-                midright=(panel.right - 54, panel.centery + 8)
-            ),
-        )
+        script = self.director.script
+        rows: list[tuple[str, str]] = []
+        if script is not None:
+            rows.append(("中首領  /  MIDBOSS",
+                         script.midboss.title if script.midboss else "（無）"))
+            rows.append(("首領  /  BOSS", script.boss.title))
+            rows.append(("符卡  /  SPELL CARD",
+                         f"{len(script.boss.spells)} 張"))
+        for index, (label, value) in enumerate(rows):
+            y = panel.top + 222 + index * 44
+            self.screen.blit(
+                self.font.render(label, True, config.PALE_GOLD), (left, y)
+            )
+            self.screen.blit(
+                self.font.render(value, True, config.WHITE),
+                (left + 260, y),
+            )
+
+        if script is not None:
+            portrait_group = self.art.hud_portraits.get(script.boss.key) or ()
+            if portrait_group:
+                portrait = portrait_group[0]
+                self.screen.blit(
+                    portrait,
+                    portrait.get_rect(
+                        midright=(panel.right - 54, panel.centery + 8)
+                    ),
+                )
+
         self.screen.blit(
             self.font.render("避開彈幕，破除符卡。", True, config.PALE_GOLD),
             (left, panel.bottom - 62),
         )
 
     def _draw_ending(self, background: pygame.Surface, victory: bool) -> None:
-        """結算回顾：原作插图、符卡结果、战绩与再战指引。"""
+        """結算回顾：原作插图、关卡进度、战绩与再战指引。"""
         self.screen.blit(background, (0, 0))
         self.screen.blit(self.ending_shade, (0, 0))
         panel = pygame.Rect(120, 128, 1040, 704)
         self._draw_ornate_panel(panel)
         left = panel.left + 58
-        phase = min(max(self.boss.phase, 1), len(config.BOSS_PHASE_NAMES))
-        spell_name = config.BOSS_PHASE_NAMES[phase - 1]
         if victory and self.ending_page > 0:
             self._draw_victory_text_page(panel)
             return
@@ -1108,16 +1730,20 @@ class Game:
             self.screen, config.GOLD,
             (left, panel.top + 158), (panel.right - 58, panel.top + 158), 1,
         )
+        total_stages = max(1, len(self.director.stages))
+        stage_no = min(max(self.director.stage_number, 1), total_stages)
         self.screen.blit(
             self.font.render("紅霧異変  /  紅魔館異聞", True, config.PALE_GOLD),
             (left, panel.top + 184),
         )
+        if victory:
+            progress = f"全 {total_stages} 關  /  ALL STAGES CLEARED"
+        else:
+            progress = f"到達  /  STAGE {stage_no} / {total_stages}"
+            if self.boss is not None:
+                progress += f"  「{self.boss.spell.name}」"
         self.screen.blit(
-            self.font.render(
-                "三重符卡  /  SPELL CARD CLEAR  3 / 3"
-                if victory else f"到達符卡  /  {phase} / 3  {spell_name}",
-                True, config.WHITE,
-            ),
+            self.font.render(progress, True, config.WHITE),
             (left, panel.top + 232),
         )
         self.screen.blit(
@@ -1134,6 +1760,13 @@ class Game:
                 True, config.MUTED,
             ),
             (left, panel.top + 350),
+        )
+        self.screen.blit(
+            self.font.render(
+                f"符卡取得  {self.spells_captured}    失敗  {self.spells_failed}",
+                True, config.PALE_GOLD,
+            ),
+            (left, panel.top + 398),
         )
 
         result_rect = self.art.result_screen.get_rect(
@@ -1166,9 +1799,13 @@ class Game:
         page = self.ending_page
         left = panel.left + 58
         right = panel.right - 58
-        if page == 1:
+        afterword_count = len(self.VICTORY_AFTERWORD_PAGES)
+        is_afterword = 1 <= page <= afterword_count
+        is_credits = page == len(self.ENDING_PAGES) - 1
+
+        if is_afterword:
             title = "後記"
-            subtitle = "AFTERWORD  /  異変のあと"
+            subtitle = f"AFTERWORD  /  異変のあと  {page} / {afterword_count}"
         else:
             title = "謝辞"
             subtitle = "STAFF ROLL  /  ACKNOWLEDGMENTS"
@@ -1190,9 +1827,33 @@ class Game:
             (left, panel.top + 158), (right, panel.top + 158), 1,
         )
 
-        if page == 1:
+        if is_afterword:
+            # 每页日后谈配一张角色立绘，营造原作 CG 感（右侧底部对齐）。
+            afterword_index = page - 1
+            if 0 <= afterword_index < len(self.AFTERWORD_PAGE_VISUALS):
+                _, portrait_key, portrait_idx = self.AFTERWORD_PAGE_VISUALS[
+                    afterword_index
+                ]
+                portraits = self.art.portraits.get(portrait_key)
+                if portraits and 0 <= portrait_idx < len(portraits):
+                    portrait = portraits[portrait_idx]
+                    px = panel.right - 40 - portrait.get_width()
+                    py = panel.bottom - 120 - portrait.get_height()
+                    # 立绘下方加一层柔光，让角色从深色卡片中浮起。
+                    glow = pygame.Surface(
+                        (portrait.get_width() + 40, portrait.get_height() + 40),
+                        pygame.SRCALPHA,
+                    )
+                    pygame.draw.ellipse(
+                        glow, (120, 68, 54, 55), glow.get_rect().inflate(-6, -6)
+                    )
+                    self.screen.blit(
+                        glow, (px - 20, py - 20),
+                    )
+                    self.screen.blit(portrait, (px, py))
+
             y = panel.top + 194
-            for line in self.VICTORY_AFTERWORD:
+            for line in self.VICTORY_AFTERWORD_PAGES[page - 1]:
                 if line:
                     self.screen.blit(
                         self.font.render(line, True, config.WHITE), (left, y)
@@ -1200,7 +1861,12 @@ class Game:
                     y += 38
                 else:
                     y += 22
-            hint = "← 戰績  ·  → / Enter 謝辞  ·  R 再戰  ·  Esc 標題"
+            if page == 1:
+                hint = "← 戰績  ·  → / Enter 下一頁  ·  R 再戰  ·  Esc 標題"
+            elif page == afterword_count:
+                hint = "← 上一頁  ·  → / Enter 謝辞  ·  R 再戰  ·  Esc 標題"
+            else:
+                hint = "← 上一頁  ·  → / Enter 下一頁  ·  R 再戰  ·  Esc 標題"
         else:
             y = panel.top + 198
             for label, value in self.VICTORY_CREDITS:
@@ -1243,16 +1909,323 @@ class Game:
             "PAUSED  /  SPELL CARD", config.MUTED,
             font=self.font, y=panel.top + 124, center_x=center_x,
         )
-        phase = min(max(self.boss.phase, 1), len(config.BOSS_PHASE_NAMES))
+        if self.boss is not None:
+            spell_text = (
+                f"{self.boss.spec.title}  "
+                f"第 {self.boss.phase} 符卡 「{self.boss.spell.name}」"
+                f"  {self.boss.phase} / {self.boss.spell_count}"
+            )
+        else:
+            spell_text = "雜兵波次進行中"
         self._draw_center_text(
-            f"第 {phase} 符卡  「{config.BOSS_PHASE_NAMES[phase - 1]}」",
-            config.WHITE, font=self.font, y=panel.top + 192, center_x=center_x,
+            spell_text, config.WHITE, font=self.font,
+            y=panel.top + 192, center_x=center_x,
         )
         self._draw_center_text(
             "F1 继续弹幕  ·  Esc 退出异变调查",
             config.PALE_GOLD, font=self.font,
             y=panel.top + 258, center_x=center_x,
         )
+
+    def _draw_stage_select(self) -> None:
+        """关卡选择界面：列出三关，锁定的关显示锁形，当前选中高亮。"""
+        self.screen.blit(self.title_background, (0, 0))
+        self.screen.blit(self.title_shade, (0, 0))
+
+        panel = pygame.Rect(220, 120, config.SCREEN_W - 440, config.SCREEN_H - 240)
+        self._draw_ornate_panel(panel)
+        left = panel.left + 48
+        right = panel.right - 48
+
+        self.screen.blit(
+            self.font_big.render("選擇關卡", True, config.PALE_GOLD),
+            (left, panel.top + 36),
+        )
+        self.screen.blit(
+            self.font.render("SELECT STAGE  /  紅霧異変", True, config.MUTED),
+            (left, panel.top + 100),
+        )
+        pygame.draw.line(
+            self.screen, config.GOLD,
+            (left, panel.top + 148), (right, panel.top + 148), 1,
+        )
+
+        row_h = 132
+        start_y = panel.top + 184
+        for index in range(config.STAGE_COUNT):
+            unlocked = index < self.unlocked_stage
+            selected = index == self.stage_select_index
+            y = start_y + index * row_h
+            row = pygame.Rect(left, y, right - left, row_h - 16)
+
+            if selected:
+                sel = pygame.Surface(row.size, pygame.SRCALPHA)
+                sel.fill((92, 20, 34, 180))
+                self.screen.blit(sel, row.topleft)
+            pygame.draw.rect(self.screen, config.GOLD, row, 1 if selected else 0)
+
+            # 关卡编号
+            self.screen.blit(
+                self.font_big.render(
+                    f"{index + 1:02d}",
+                    True, config.PALE_GOLD if unlocked else config.GRAY,
+                ),
+                (row.left + 24, row.top + 18),
+            )
+            # 标题与副标题
+            title_color = config.WHITE if unlocked else config.GRAY
+            self.screen.blit(
+                self.font.render(
+                    self.STAGE_TITLES[index], True, title_color,
+                ),
+                (row.left + 110, row.top + 22),
+            )
+            self.screen.blit(
+                self.font.render(
+                    self.STAGE_SUBTITLES[index], True, config.MUTED,
+                ),
+                (row.left + 110, row.top + 58),
+            )
+            # Boss 名
+            boss_color = config.PALE_GOLD if unlocked else config.GRAY
+            self.screen.blit(
+                self.font.render(
+                    f"首領  /  {self.STAGE_BOSS_NAMES[index]}",
+                    True, boss_color,
+                ),
+                (row.left + 110, row.top + 90),
+            )
+            # 锁定标记
+            if not unlocked:
+                lock = self.font.render("🔒 LOCKED", True, config.GRAY)
+                self.screen.blit(
+                    lock, lock.get_rect(midright=(row.right - 24, row.centery)),
+                )
+            elif selected:
+                arrow = self.font.render("▶ ENTER", True, config.PALE_GOLD)
+                self.screen.blit(
+                    arrow, arrow.get_rect(midright=(row.right - 24, row.centery)),
+                )
+
+        pygame.draw.line(
+            self.screen, (120, 68, 54),
+            (left, panel.bottom - 96), (right, panel.bottom - 96), 1,
+        )
+        hint = "↑ ↓ 選擇關卡    Enter 開始    Esc 返回標題"
+        self.screen.blit(
+            self.font.render(hint, True, config.WHITE),
+            (left, panel.bottom - 64),
+        )
+
+    def _draw_afterword_view(self) -> None:
+        """从菜单进入的日后谈翻阅：复用结局页面的渲染逻辑。"""
+        ending_background = self._ending_background_for_page(self.ending_page)
+        self._draw_ending(ending_background, victory=True)
+
+    def _draw_cg_gallery(self) -> None:
+        """紅霧人物録：列表态浏览角色，详情态查看该角色的多张 CG。"""
+        self.screen.blit(self.title_background, (0, 0))
+        self.screen.blit(self.ending_shade, (0, 0))
+
+        panel = pygame.Rect(60, 60, config.SCREEN_W - 120, config.SCREEN_H - 120)
+        self._draw_ornate_panel(panel)
+        left = panel.left + 40
+        right = panel.right - 40
+
+        entry = self.CG_GALLERY_ENTRIES[self.cg_gallery_index]
+        portrait_key, name, en_name, role, lines, short_name = entry
+        portrait_group = self.art.portraits.get(portrait_key)
+        is_detail = self.cg_detail_active
+        cg_count = len(portrait_group) if portrait_group else 1
+        cg_index = min(self.cg_detail_cg_index, cg_count - 1) if is_detail else 0
+
+        # 标题区
+        if is_detail:
+            title_text = name
+            sub_text = f"CG 詳情  /  {en_name}"
+        else:
+            title_text = "紅霧人物録"
+            sub_text = "CHARACTER RECORD  /  登場人物図鑑"
+        self.screen.blit(
+            self.font_big.render(title_text, True, config.PALE_GOLD),
+            (left, panel.top + 32),
+        )
+        self.screen.blit(
+            self.font.render(sub_text, True, config.MUTED),
+            (left, panel.top + 96),
+        )
+        if is_detail:
+            counter = self.font.render(
+                f"CG {cg_index + 1} / {cg_count}", True, config.PALE_GOLD
+            )
+        else:
+            counter = self.font.render(
+                f"{self.cg_gallery_index + 1} / {len(self.CG_GALLERY_ENTRIES)}",
+                True, config.PALE_GOLD,
+            )
+        self.screen.blit(
+            counter, counter.get_rect(topright=(right, panel.top + 56))
+        )
+        pygame.draw.line(
+            self.screen, config.GOLD,
+            (left, panel.top + 138), (right, panel.top + 138), 1,
+        )
+
+        # 左侧：大立绘 + 装饰画框
+        portrait = portrait_group[cg_index] if portrait_group else None
+        if portrait is not None:
+            gallery_h = 470
+            pw = max(1, round(portrait.get_width() * gallery_h / portrait.get_height()))
+            big_portrait = pygame.transform.smoothscale(portrait, (pw, gallery_h))
+
+            frame_pad = 18
+            frame_rect = pygame.Rect(0, 0, pw + frame_pad * 2, gallery_h + frame_pad * 2)
+            frame_rect.midleft = (left + 8, panel.centery + 10)
+
+            glow = pygame.Surface(
+                (frame_rect.width + 60, frame_rect.height + 60), pygame.SRCALPHA
+            )
+            pygame.draw.ellipse(
+                glow, (140, 78, 50, 70), glow.get_rect().inflate(-10, -10)
+            )
+            self.screen.blit(glow, glow.get_rect(center=frame_rect.center))
+            frame_bg = pygame.Surface(frame_rect.size, pygame.SRCALPHA)
+            frame_bg.fill((18, 8, 14, 235))
+            self.screen.blit(frame_bg, frame_rect.topleft)
+            pygame.draw.rect(self.screen, config.GOLD, frame_rect, 2)
+            pygame.draw.rect(
+                self.screen, (120, 68, 54), frame_rect.inflate(-8, -8), 1
+            )
+            self.screen.blit(
+                big_portrait, big_portrait.get_rect(center=frame_rect.center)
+            )
+
+        # 右侧：人物名、英文名、身份、介绍
+        text_left = panel.left + 560
+        text_right = right
+        y = panel.top + 176
+
+        self.screen.blit(self.font_big.render(name, True, config.PALE_GOLD), (text_left, y))
+        y += 62
+        self.screen.blit(self.font.render(en_name, True, config.MUTED), (text_left, y))
+        y += 36
+        self.screen.blit(self.font.render(f"【{role}】", True, config.GOLD), (text_left, y))
+        y += 56
+        pygame.draw.line(
+            self.screen, (120, 68, 54),
+            (text_left, y), (text_right, y), 1,
+        )
+        y += 32
+        for line in lines:
+            surf = self.font.render(line, True, config.WHITE)
+            self.screen.blit(surf, (text_left, y))
+            y += 40
+
+        # 底部缩略图条
+        thumb_h = 86
+        thumb_area_top = panel.bottom - 140
+        pygame.draw.line(
+            self.screen, (120, 68, 54),
+            (left, thumb_area_top - 16), (right, thumb_area_top - 16), 1,
+        )
+
+        if is_detail:
+            # 详情态：显示该角色的所有表情 CG
+            thumb_count = cg_count
+            thumb_w = 70
+            gap = 14
+            total_w = thumb_count * thumb_w + (thumb_count - 1) * gap
+            start_x = panel.centerx - total_w // 2
+            for i in range(thumb_count):
+                tx = start_x + i * (thumb_w + gap)
+                ty = thumb_area_top
+                tframe = pygame.Rect(tx, ty, thumb_w, thumb_h)
+                active = i == cg_index
+                tbg = pygame.Surface(tframe.size, pygame.SRCALPHA)
+                tbg.fill((92, 20, 34, 210) if active else (10, 5, 12, 180))
+                self.screen.blit(tbg, tframe.topleft)
+                pygame.draw.rect(
+                    self.screen, config.GOLD if active else (80, 50, 40),
+                    tframe, 2,
+                )
+                if portrait_group:
+                    thumb = pygame.transform.smoothscale(
+                        portrait_group[i],
+                        (max(1, round(portrait_group[i].get_width() * thumb_h / portrait_group[i].get_height())), thumb_h),
+                    )
+                    self.screen.blit(thumb, thumb.get_rect(center=tframe.center))
+                label = self.font.render(
+                        f"{i + 1}", True, config.PALE_GOLD if active else config.MUTED
+                    )
+                self.screen.blit(
+                        label, label.get_rect(midtop=(tframe.centerx, tframe.bottom + 6))
+                    )
+            hint = "← →  切換表情     Esc 返回列表"
+        else:
+            # 列表态：显示所有角色，缩略图下方用短名避免重叠
+            thumb_count = len(self.CG_GALLERY_ENTRIES)
+            thumb_w = 72
+            gap = 64
+            total_w = thumb_count * thumb_w + (thumb_count - 1) * gap
+            start_x = panel.centerx - total_w // 2
+            for i, (pkey, pname, _, _, _, pshort) in enumerate(self.CG_GALLERY_ENTRIES):
+                tx = start_x + i * (thumb_w + gap)
+                ty = thumb_area_top
+                tframe = pygame.Rect(tx, ty, thumb_w, thumb_h)
+                active = i == self.cg_gallery_index
+                tbg = pygame.Surface(tframe.size, pygame.SRCALPHA)
+                tbg.fill((92, 20, 34, 210) if active else (10, 5, 12, 180))
+                self.screen.blit(tbg, tframe.topleft)
+                pygame.draw.rect(
+                    self.screen, config.GOLD if active else (80, 50, 40),
+                    tframe, 2,
+                )
+                pgroup = self.art.portraits.get(pkey)
+                if pgroup:
+                    thumb = pygame.transform.smoothscale(
+                        pgroup[0],
+                        (max(1, round(pgroup[0].get_width() * thumb_h / pgroup[0].get_height())), thumb_h),
+                    )
+                    self.screen.blit(thumb, thumb.get_rect(center=tframe.center))
+                name_label = self.font.render(
+                        pshort, True, config.PALE_GOLD if active else config.MUTED
+                    )
+                self.screen.blit(
+                    name_label,
+                    name_label.get_rect(midtop=(tframe.centerx, tframe.bottom + 6)),
+                )
+            hint = "← →  切換角色     Enter 查看 CG     Esc 返回標題"
+
+        self.screen.blit(
+            self.font.render(hint, True, config.WHITE),
+            (left, panel.bottom - 36),
+        )
+
+
+    # 每页日后谈对应的背景与立绘：营造原作 CG 感，而非纯文本。
+    AFTERWORD_PAGE_VISUALS = (
+        ("scene", "remilia", 0),   # 第1页：红魔馆内，蕾米莉亚
+        ("afterword", "cirno", 0), # 第2页：雾之湖畔，琪露诺
+        ("victory", "sakuya", 0),  # 第3页：红魔馆日常，咲夜
+    )
+
+    def _ending_background_for_page(self, page: int) -> pygame.Surface:
+        """按结局页码选择背景图：result / afterword(多页各有不同) / credits。"""
+        last = len(self.ENDING_PAGES) - 1
+        if page <= 0:
+            return self.art.ending_victory
+        if page >= last:
+            return self.art.ending_credits
+        afterword_index = page - 1
+        if 0 <= afterword_index < len(self.AFTERWORD_PAGE_VISUALS):
+            bg_key = self.AFTERWORD_PAGE_VISUALS[afterword_index][0]
+            if bg_key == "scene":
+                return self.art.scene_background
+            if bg_key == "afterword":
+                return self.art.ending_afterword
+            if bg_key == "victory":
+                return self.art.ending_victory
+        return self.art.ending_afterword
 
     def _draw_title_screen(self) -> None:
         self.screen.blit(self.title_background, (0, 0))
@@ -1261,11 +2234,11 @@ class Game:
         self._draw_ornate_panel(title_panel)
         left = title_panel.left + 28
         self.screen.blit(
-            self.font.render("幻想郷異変録  /  STORY 01", True, config.MUTED),
+            self.font.render("红雾异变  /  STORY 01", True, config.MUTED),
             (left, title_panel.top + 28),
         )
         self.screen.blit(
-            self.font_big.render("紅霧異変", True, config.PALE_GOLD),
+            self.font_big.render("东方红雾录", True, config.PALE_GOLD),
             (left, title_panel.top + 76),
         )
         self.screen.blit(
@@ -1307,9 +2280,28 @@ class Game:
             (800, 425),
         )
 
-        for index, (selected_image, idle_image) in enumerate(self.title_menu_images):
-            image = selected_image if index == self.menu_selection else idle_image
-            self.screen.blit(image, (800, 500 + index * 112))
+        # 所有菜单项统一使用 atlas 图片风格。
+        items = self._menu_items()
+        count = len(items)
+        btn_w, btn_h = 360, 90
+        # 根据菜单项数量自适应起始位置与间距，保证全部可见。
+        if count <= 4:
+            start_y, gap = 500, 14
+        else:
+            start_y, gap = 466, 8
+        for index, label in enumerate(items):
+            y = start_y + index * (btn_h + gap)
+            row = self.MENU_ATLAS_ROW.get(label, 0)
+            selected, idle = self._menu_atlas_rows[row]
+            image = selected if index == self.menu_selection else idle
+            # 选中项加一层绯红高光底板，增强厚重感
+            if index == self.menu_selection:
+                plate = pygame.Rect(794, y - 3, btn_w + 12, btn_h + 6)
+                hl = pygame.Surface(plate.size, pygame.SRCALPHA)
+                hl.fill((92, 20, 34, 130))
+                self.screen.blit(hl, plate.topleft)
+                pygame.draw.rect(self.screen, config.GOLD, plate, 2)
+            self.screen.blit(image, (800, y))
 
     def _draw_manual_screen(self) -> None:
         """说明书：哥特风双线描金边框 + 页签，依次为背景、用语、操作。"""
@@ -1446,7 +2438,7 @@ class Game:
                 )
 
         # Boss 命中区
-        if self.boss.alive:
+        if self.boss is not None and self.boss.alive:
             pygame.draw.circle(
                 self.screen, config.DEBUG_HIT_COLOR,
                 (round(self.boss.pos.x), round(self.boss.pos.y)),
@@ -1465,7 +2457,10 @@ class Game:
         )
 
     def _draw_phase_hud(self) -> None:
-        """弹幕场顶部的符卡条：符卡名、剩余段数与倒计时。"""
+        """弹幕场顶部的符卡条：符卡名、剩余段数与倒计时；无 Boss 时隐藏。"""
+        boss = self.boss
+        if boss is None or not boss.alive:
+            return
         bar = pygame.Rect(config.PLAYFIELD_LEFT, config.PLAYFIELD_TOP,
                           config.PLAYFIELD_WIDTH, 40)
         shade = pygame.Surface(bar.size, pygame.SRCALPHA)
@@ -1475,11 +2470,10 @@ class Game:
             self.screen, config.GOLD, bar.bottomleft, bar.bottomright, 1
         )
 
-        total = len(config.BOSS_PHASE_NAMES)
-        phase = min(self.boss.phase, total)
-        name = config.BOSS_PHASE_NAMES[phase - 1]
+        total = boss.spell_count
+        phase = min(boss.phase, total)
         self.screen.blit(
-            self.font.render(name, True, config.PALE_GOLD),
+            self.font.render(boss.spell.name, True, config.PALE_GOLD),
             (bar.left + 16, bar.top + 7),
         )
 
@@ -1497,6 +2491,74 @@ class Game:
         seconds = max(0.0, self.phase_timer)
         timer = self.font.render(f"{seconds:05.2f}", True, config.WHITE)
         self.screen.blit(timer, timer.get_rect(midright=(bar.right - 16, bar.centery)))
+        # 符卡取得数：本轮已经完整避开、未用灵击而破开的符卡张数
+        captured = self.font.render(
+            f"取得 {self.spells_captured}", True, config.PALE_GOLD
+        )
+        self.screen.blit(
+            captured, captured.get_rect(midright=(bar.right - 108, bar.centery))
+        )
+
+    def _draw_spell_announcement(self) -> None:
+        """符卡展开时的播报卡片：符卡名 + 技能描述，渐入渐出。"""
+        boss = self.boss
+        if boss is None or not boss.alive:
+            return
+        if self.spell_announce_timer <= 0.0:
+            return
+        spell = boss.spell
+        if not spell.flavor and not spell.name:
+            return
+
+        field = pygame.Rect(
+            config.PLAYFIELD_LEFT, config.PLAYFIELD_TOP,
+            config.PLAYFIELD_WIDTH, config.PLAYFIELD_HEIGHT,
+        )
+        # 后 0.5 秒淡出
+        total = max(0.001, config.SPELL_ANNOUNCE_DURATION)
+        fade_in = min(1.0, (total - self.spell_announce_timer) / 0.3)
+        fade_out = min(1.0, self.spell_announce_timer / 0.5)
+        alpha = int(255 * min(fade_in, fade_out))
+
+        card_h = 116
+        card = pygame.Rect(
+            field.left, field.centery - card_h // 2, field.width, card_h
+        )
+        shade = pygame.Surface(card.size, pygame.SRCALPHA)
+        shade.fill((8, 3, 12, int(220 * min(1.0, fade_in))))
+        self.screen.blit(shade, card.topleft)
+        pygame.draw.line(self.screen, config.GOLD, card.topleft, card.topright, 2)
+        pygame.draw.line(self.screen, config.GOLD, card.bottomleft,
+                         card.bottomright, 2)
+
+        label = self.font.render(
+            f"第 {min(boss.phase, boss.spell_count)} 符卡  /  SPELL CARD",
+            True, config.MUTED,
+        )
+        label.set_alpha(alpha)
+        self.screen.blit(label, (card.left + 28, card.top + 16))
+
+        name = self.font_big.render(spell.name, True, config.PALE_GOLD)
+        name.set_alpha(alpha)
+        self.screen.blit(name, (card.left + 28, card.top + 42))
+
+        if spell.flavor:
+            # 技能描述按播放场宽折成一行或两行
+            flavor = spell.flavor
+            max_chars = (card.width - 56) // max(1, self.font.size("字")[0])
+            if len(flavor) > max_chars:
+                first = flavor[:max_chars]
+                second = flavor[max_chars:]
+                line1 = self.font.render(first, True, config.WHITE)
+                line2 = self.font.render(second, True, config.WHITE)
+                line1.set_alpha(alpha)
+                line2.set_alpha(alpha)
+                self.screen.blit(line1, (card.left + 28, card.top + 84))
+                self.screen.blit(line2, (card.left + 28, card.top + 84 + 30))
+            else:
+                desc = self.font.render(flavor, True, config.WHITE)
+                desc.set_alpha(alpha)
+                self.screen.blit(desc, (card.left + 28, card.top + 92))
 
     def _draw_hud(self) -> None:
         panel = pygame.Rect(
@@ -1523,12 +2585,20 @@ class Game:
 
         left = panel.left + 24
         right = panel.right - 24
+        script = self.director.script
+        stage_no = min(max(self.director.stage_number, 1), config.STAGE_COUNT)
         self.screen.blit(
-            self.font_big.render("红魔馆", True, config.PALE_GOLD),
+            self.font_big.render(
+                script.title if script is not None else "幻想郷", True,
+                config.PALE_GOLD,
+            ),
             (left, panel.top + 24),
         )
         self.screen.blit(
-            self.font.render("SCARLET DEVIL MANOR", True, config.MUTED),
+            self.font.render(
+                f"STAGE {stage_no:02d}  /  {config.STAGE_COUNT}", True,
+                config.MUTED,
+            ),
             (left + 2, panel.top + 78),
         )
         pygame.draw.line(
@@ -1549,21 +2619,25 @@ class Game:
             (left, panel.top + 206), (right, panel.top + 206), 1,
         )
 
-        total = len(config.BOSS_PHASE_NAMES)
+        boss = self.boss
         self.screen.blit(
-            self.font.render("BOSS  /  PHASE", True, config.PALE_GOLD),
+            self.font.render(
+                boss.spec.title if boss is not None else "雜兵波次",
+                True, config.PALE_GOLD,
+            ),
             (left, panel.top + 218),
         )
         phase_text = self.font.render(
-            f"{min(self.boss.phase, total)} / {total}", True, config.WHITE
+            f"{min(boss.phase, boss.spell_count)} / {boss.spell_count}"
+            if boss is not None else "- / -",
+            True, config.WHITE,
         )
         self.screen.blit(phase_text, phase_text.get_rect(topright=(right, panel.top + 218)))
-        self.screen.blit(
-            self.art.boss_faces[min(self.boss.phase, len(self.art.boss_faces)) - 1],
-            (right - self.art.boss_portrait.get_width(), panel.top + 250),
-        )
+        if boss is not None:
+            portrait = self._boss_sprite(boss)
+            self.screen.blit(portrait, portrait.get_rect(topright=(right, panel.top + 250)))
 
-        health_ratio = max(0.0, self.boss.hp / self.boss.max_hp)
+        health_ratio = max(0.0, boss.hp / boss.max_hp) if boss is not None else 0.0
         self.screen.blit(
             self.font.render("生命值  /  HP", True, config.MUTED),
             (left, panel.top + 434),
@@ -1599,6 +2673,7 @@ class Game:
             ("擦弹  /  GRAZE", self.graze_total),
             ("敌弹  /  BULLETS", len(self.bullets)),
             ("命中  /  HITS", self.hit_total),
+            ("灵击  /  BOMB", self.bombs),
         )
         for index, (label, value) in enumerate(rows):
             y = panel.top + 562 + index * 32
@@ -1606,8 +2681,8 @@ class Game:
             value_surface = self.font.render(str(value), True, config.WHITE)
             self.screen.blit(value_surface, value_surface.get_rect(topright=(right, y)))
 
-        # 火力：左侧标签、右侧数值，中间一根本色进度条
-        power_y = panel.top + 658
+        # 火力：标签与数值同行，进度条独占下一行（避免与标签重叠）
+        power_y = panel.top + 690
         self.screen.blit(
             self.font.render("火力  /  POWER", True, config.MUTED),
             (left, power_y),
@@ -1616,7 +2691,7 @@ class Game:
         self.screen.blit(
             power_value, power_value.get_rect(topright=(right, power_y))
         )
-        power_bar = pygame.Rect(left + 150, power_y + 9, 110, 12)
+        power_bar = pygame.Rect(left, power_y + 30, panel.width - 48, 10)
         pygame.draw.rect(self.screen, (47, 19, 28), power_bar)
         power_fill = power_bar.inflate(-4, -4)
         power_fill.width = round(
@@ -1626,14 +2701,14 @@ class Game:
             pygame.draw.rect(self.screen, config.GOLD, power_fill)
         pygame.draw.rect(self.screen, config.GOLD, power_bar, 1)
 
-        item_y = panel.top + 690
+        item_y = panel.top + 736
         self.screen.blit(
             self.font.render("道具  /  ITEM", True, config.MUTED), (left, item_y)
         )
         item_value = self.font.render(str(self.item_total), True, config.WHITE)
         self.screen.blit(item_value, item_value.get_rect(topright=(right, item_y)))
 
-        divider_y = panel.top + 736
+        divider_y = panel.top + 766
         pygame.draw.line(
             self.screen, config.GOLD,
             (left, divider_y), (right, divider_y), 1,
@@ -1643,10 +2718,10 @@ class Game:
                 "调  试  /  DEBUG" if self.debug_overlay else "操  作  /  CONTROL",
                 True, config.PALE_GOLD,
             ),
-            (left, divider_y + 20),
+            (left, divider_y + 16),
         )
         if self.god_mode:
-            badge = pygame.Rect(right - 104, divider_y + 18, 104, 30)
+            badge = pygame.Rect(right - 96, divider_y + 14, 96, 26)
             pygame.draw.rect(self.screen, (92, 20, 34), badge)
             pygame.draw.rect(self.screen, config.GOLD, badge, 1)
             status = self.font.render("GOD ON", True, config.PALE_GOLD)
@@ -1659,7 +2734,7 @@ class Game:
                 ("Boss 命中 / HIT", stats["boss_hits"]),
             )
             for index, (label, value) in enumerate(debug_rows):
-                y = divider_y + 60 + index * 36
+                y = divider_y + 60 + index * 34
                 self.screen.blit(
                     self.font.render(label, True, config.MUTED), (left, y)
                 )
@@ -1671,13 +2746,13 @@ class Game:
 
         hints = (
             "方向键 / WASD   移动",
-            "Shift 低速   F3 无敌",
-            "Z 射击   F1 暂停   F2 调试",
+            "Shift 低速   F3 密码无敌",
+            "Z 射击   X 灵击   F1 暂停",
         )
         for index, hint in enumerate(hints):
             self.screen.blit(
                 self.font.render(hint, True, config.WHITE),
-                (left, divider_y + 60 + index * 36),
+                (left, divider_y + 46 + index * 28),
             )
 
     def _draw_center_text(

@@ -7,6 +7,7 @@ import pygame
 from pygame.math import Vector2
 
 from src import collision, config
+from src.director import BANNER, StageDirector
 from src.entities import Boss, Fairy, Item, Player, PlayerShot
 from src.game import Game
 
@@ -16,18 +17,24 @@ def make_game() -> Game:
     game = Game.__new__(Game)
     game.player = Player(config.PLAYER_START_X, config.PLAYER_START_Y)
     game.boss = Boss(config.BOSS_START_X, config.BOSS_START_Y)
+    game.director = StageDirector()
     game.bullets = []
     game.player_shots = []
     game.fairies = []
     game.fairy_kill_count = 0
     game.items = []
     game.effects = []
-    game.fairy_timer = config.FAIRY_SPAWN_MIN
     game.shooting = False
     game.shoot_requested = False
+    game.focus = False
     game.fire_timer = 0.0
-    game.boss_attack_timer = config.BOSS_PHASE1_INTERVAL
-    game.boss_attack_phase = game.boss.phase
+    game.boss_attack_phase = 0
+    game.spell_timers = []
+    game.spell_imperilled = False
+    game.spell_timed_out = False
+    game.spells_captured = 0
+    game.spells_failed = 0
+    game.awarded_clear = 0
     game.grid = collision.SpatialGrid(
         config.SCREEN_W, config.SCREEN_H, config.GRID_CELL_SIZE
     )
@@ -40,16 +47,18 @@ def make_game() -> Game:
     game.debug_overlay = False
     game.debug_stats = Game._empty_debug_stats()
     game.lives = config.PLAYER_LIVES
+    game.bombs = config.PLAYER_BOMB_START
+    game.bomb_timer = 0.0
     game.invulnerable_timer = 0.0
     game.god_mode = False
     game.victory = False
+    game.ending_page = 0
     game.game_over = False
     game.running = True
     game.score = 0
     game.hiscore = 10 ** 9
     game.power = config.PLAYER_POWER_START
     game.item_total = 0
-    game.spiral_angle = 0.0
     game.phase_timer = config.BOSS_PHASE_TIME_LIMIT
     game.boss_flash = 0.0
     game.graze_fx_cooldown = 0.0
@@ -58,6 +67,7 @@ def make_game() -> Game:
     game.art = SimpleNamespace(  # type: ignore[assignment]
         hit_spark=stub, graze_ring=stub, boss_burst=stub,
         bullet_small={name: stub for name in ("red", "blue", "white")},
+        bullet_mid={name: stub for name in ("red", "white")},
         bullet_large={"magenta": stub, "cyan": stub},
         item_sprites={kind: stub for kind in config.ITEM_KINDS},
         item_halo=stub,
@@ -234,58 +244,59 @@ class FairyCombatTests(unittest.TestCase):
         self.assertEqual(game.items, [])
 
 
-class ThirdSpellCardTests(unittest.TestCase):
-    def test_boss_splits_its_health_into_three_phases(self) -> None:
+class SpellPhaseTests(unittest.TestCase):
+    """符卡切换：生命分段、换符卡掉落、超时推进。"""
+
+    def test_boss_health_splits_evenly_across_the_spell_cards(self) -> None:
         boss = Boss(config.BOSS_START_X, config.BOSS_START_Y)
-        segment = boss.max_hp / 3.0
+        segment = boss.max_hp / boss.spell_count
 
         self.assertEqual(boss.phase, 1)
-        boss.take_damage(segment)
-        self.assertEqual(boss.phase, 2)
-        boss.take_damage(segment)
-        self.assertEqual(boss.phase, 3)
+        for expected in range(2, boss.spell_count + 1):
+            boss.take_damage(segment)
+            self.assertEqual(boss.phase, expected)
+            self.assertTrue(boss.alive)
         boss.take_damage(segment)
         self.assertFalse(boss.alive)
 
-    def test_phase_three_fires_spiral_arms_and_scatter(self) -> None:
+    def test_entering_a_new_spell_drops_power_items(self) -> None:
         game = make_game()
-        game.boss.take_damage(game.boss.max_hp * 2.0 / 3.0)
+        # 第一张符卡「展开」时不结算、不掉落
+        game._update_boss_attacks(0.0)
+        self.assertEqual(game.items, [])
+        self.assertEqual(game.boss_attack_phase, 1)
 
-        game._spawn_boss_attack()
-
-        self.assertEqual(
-            len(game.bullets),
-            config.BOSS_SPIRAL_ARMS + config.BOSS_SCATTER_COUNT,
-        )
-        self.assertGreater(game.spiral_angle, 0.0)
-        self.assertEqual(len(config.BOSS_PHASE_NAMES), 3)
-
-    def test_entering_a_new_phase_drops_power_items(self) -> None:
-        game = make_game()
-        game.boss.take_damage(game.boss.max_hp / 2.0)
+        # 把生命推到第二张符卡，再次推进即触发换卡
+        segment = game.boss.max_hp / game.boss.spell_count
+        game.boss.take_damage(segment + 0.5)
+        self.assertEqual(game.boss.phase, 2)
 
         game._update_boss_attacks(0.0)
 
         self.assertEqual(len(game.items), config.BOSS_PHASE_DROP_POWER)
         self.assertTrue(all(item.kind == "power" for item in game.items))
+        self.assertEqual(game.spells_captured, 1)
 
-    def test_entering_phase_three_also_drops_a_life_item(self) -> None:
+    def test_entering_the_last_spell_also_drops_a_life_item(self) -> None:
         game = make_game()
-        game.boss.take_damage(game.boss.max_hp * 2.0 / 3.0)
-        game.boss_attack_phase = 2
+        game._update_boss_attacks(0.0)
+        segment = game.boss.max_hp / game.boss.spell_count
+        game.boss.take_damage(segment * (game.boss.spell_count - 1) + 0.5)
+        self.assertEqual(game.boss.phase, game.boss.spell_count)
 
         game._update_boss_attacks(0.0)
 
         kinds = {item.kind for item in game.items}
         self.assertIn("life", kinds)
 
-    def test_force_phase_end_walks_through_all_three_phases(self) -> None:
+    def test_force_phase_end_walks_to_the_next_card_then_defeats_the_boss(
+            self) -> None:
         game = make_game()
 
         game._force_phase_end()
         self.assertEqual(game.boss.phase, 2)
         self.assertTrue(game.boss.alive)
-        self.assertEqual(game.phase_timer, config.BOSS_PHASE_TIME_LIMIT)
+        self.assertTrue(game.spell_timed_out)
 
         game._force_phase_end()
         self.assertEqual(game.boss.phase, 3)
@@ -301,15 +312,16 @@ class ResetRunTests(unittest.TestCase):
         game = make_game()
         game.power = 3.5
         game.item_total = 7
-        game.spiral_angle = 1.2
+        game.boss.spell_angle = 1.2
         game.items = [Item(100.0, 100.0, "power")]
 
         game._reset_run()
 
         self.assertEqual(game.power, config.PLAYER_POWER_START)
         self.assertEqual(game.item_total, 0)
-        self.assertEqual(game.spiral_angle, 0.0)
         self.assertEqual(game.items, [])
+        self.assertIsNone(game.boss)
+        self.assertEqual(game.director.state, BANNER)
 
 
 if __name__ == "__main__":

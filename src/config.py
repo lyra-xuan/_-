@@ -57,42 +57,29 @@ PLAYER_FIRE_INTERVAL = 0.18
 
 # ---------- 子弹 ----------
 BULLET_RADIUS = 7.5
-BULLET_SPEED = 225.0
 BULLET_SMALL_RADIUS = 8.0
 BULLET_LARGE_RADIUS = 13.0
+BULLET_MID_RADIUS = 11.0
 
 # ---------- Boss ----------
 BOSS_START_X = PLAYER_START_X
 BOSS_START_Y = PLAYFIELD_TOP + 148.0
 BOSS_RADIUS = 42.0
 BOSS_ATTACK_ORIGIN_OFFSET = (0.0, 38.0)  # 从立绘中心下移至身体，避免弹幕从脸部发射
-# 三段符卡，每段 180 点生命，与原先两段单段血量保持一致
-BOSS_MAX_HP = 540.0
+# 血量与符卡数由 spells.BossSpec 决定，这里只保留运动与限时
 BOSS_MOVE_SPEED = 240.0
 BOSS_LEFT_BOUND = PLAYFIELD_LEFT + 128.0
 BOSS_RIGHT_BOUND = PLAYFIELD_RIGHT - 128.0
-BOSS_PHASE1_INTERVAL = 0.85
-BOSS_PHASE2_INTERVAL = 0.60
-BOSS_PHASE3_INTERVAL = 0.42
 BOSS_ATTACK_SPEED = 232.5
-BOSS_FAN_COUNT = 5
-BOSS_FAN_STEP_DEGREES = 12.0
-BOSS_RING_COUNT = 8
-BOSS_SPIRAL_ARMS = 6            # 阶段 3 旋转螺旋的弹臂数
-BOSS_SPIRAL_STEP_DEGREES = 17.0  # 每次发射螺旋整体旋转的角度
-BOSS_SCATTER_COUNT = 4          # 阶段 3 每次额外散射的子弹数
-BOSS_SCATTER_SPEED_MIN = 120.0
-BOSS_SCATTER_SPEED_MAX = 240.0
-BOSS_PHASE_TIME_LIMIT = 45.0  # 每个阶段的符卡限时（秒），超时强制推进下一阶段
+BOSS_PHASE_TIME_LIMIT = 45.0  # 符卡限时的缺省值（秒），实际以 SpellCard.duration 为准
 BOSS_PHASE_DROP_POWER = 6     # 每次进入新阶段时掉落的火力道具数
-# 各阶段的符卡名，展示在弹幕场顶部；元素数即 Boss 的总段数
-BOSS_PHASE_NAMES = ("红符「猩红射击」", "红魔法「红色魔术」", "神枪「冈格尼尔之枪」")
+SPELL_ANNOUNCE_DURATION = 2.8  # 符卡名与技能描述的播报时长（秒）
 
 # ---------- 计分 ----------
 GRAZE_SCORE = 500       # 每次擦弹
-PHASE_SCORE = 5000      # 击破一个 Boss 阶段
-VICTORY_SCORE = 10000   # 击破 Boss
+VICTORY_SCORE = 10000   # 击破关底 Boss
 HISCORE_FILE = "hiscore.txt"
+PROGRESS_FILE = "progress.json"
 
 # ---------- 特效时长（秒） ----------
 HIT_SPARK_DURATION = 0.20
@@ -109,6 +96,7 @@ ITEM_RADIUS = 16.0          # 拾取判定半径
 ITEM_FALL_SPEED = 120.0     # 匀速下落速度（像素/秒）
 ITEM_MAGNET_RADIUS = 120.0  # 自机吸附范围
 ITEM_MAGNET_SPEED = 560.0   # 吸附时的收拢速度
+ITEM_COLLECT_LINE = PLAYFIELD_TOP + 112.0  # 到达此高度即自动回收全屏道具
 ITEM_POWER_MAX = 4.00       # 火力上限
 ITEM_POWER_GAIN = 0.05      # 每枚 Power 道具增加的火力
 ITEM_POINT_SCORE = 500      # 每枚 Point 道具的得分
@@ -121,19 +109,34 @@ ITEM_KIND_COLORS = {
     "life": GREEN,
 }
 
-# ---------- 装饰妖精 ----------
+# ---------- 杂兵 ----------
 FAIRY_HP = 20.0            # 击破所需的伤害
 FAIRY_RADIUS = 22.0        # 命中判定半径
 FAIRY_POINT_DROPS = 1      # 每只击破妖精掉落的道具数
-FAIRY_SPAWN_MIN = 1.1      # 两次生成之间的最短间隔（秒）
-FAIRY_SPAWN_MAX = 2.4
-FAIRY_SPEED_MIN = 40.0     # 下落速度范围（像素/秒）
-FAIRY_SPEED_MAX = 78.0
-FAIRY_SWAY_MIN = 18.0      # 左右摆动幅度范围（像素/秒）
-FAIRY_SWAY_MAX = 46.0
 FAIRY_DROP_PATTERN = ("point", "power", "point")
 FAIRY_LIFE_DROP_CHANCE = 0.035
-FAIRY_VARIANT_CHANCE = 0.30
+
+# ---------- 关卡流程 ----------
+STAGE_COUNT = 3
+STAGE_BANNER_DURATION = 2.6      # 关卡标题过场的停留时间（秒）
+STAGE_CLEAR_BONUS = 20000        # 通过一关的结算奖励
+MIDBOSS_SCORE = 8000             # 击破中 Boss 的得分
+BOSS_SPELL_BASE_BONUS = 2000     # 破符基础奖励
+BOSS_SPELL_TIME_BONUS = 600      # 破符时每剩余 1 秒追加的奖励
+MIDBOSS_HP = 260.0               # 中 Boss 总生命值
+STAGE_CLEAR_DELAY = 1.4          # Boss 击破后到下一关/结局的停留时间
+
+# ---------- 玩家符卡 · 灵击（Bomb） ----------
+PLAYER_BOMB_START = 3            # 初始符卡数
+PLAYER_BOMB_DURATION = 2.6       # 灵击持续（无敌 + 清弹）时间
+PLAYER_BOMB_RADIUS = 320.0       # 灵击生效半径
+PLAYER_BOMB_BULLET_SCORE = 100   # 被灵击消去的每颗子弹折算分数
+PLAYER_BOMB_CLEAR_ITEM_CAP = 24  # 灵击最多化作的道具数，避免刷屏
+PLAYER_BOMB_NAME = "霊符「夢想封印」"
+
+# ---------- 波次编排 ----------
+WAVE_ENTRY_MARGIN = 30.0         # 编队从弹幕场顶边外多远处进入
+WAVE_LULL = 0.6                  # 两波之间的默认缓冲时间
 
 # ---------- 空间网格 ----------
 GRID_CELL_SIZE = 96
