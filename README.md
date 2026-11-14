@@ -1,103 +1,127 @@
-# 东方红雾录：弹幕射击与碰撞检测实践
+# 东方红雾录
 
-《问题求解》课程大作业。使用 Python 和 pygame-ce 开发 2D 弹幕射击游戏，不使用 Unity、Godot 等游戏引擎。项目重点是可解释、可演示的碰撞检测。
+> 一款致敬《东方红魔乡》的 2D 弹幕射击游戏。用 Python + pygame-ce 从零实现碰撞检测、关卡状态机与数据驱动的符卡系统，三关完整流程可通关。
 
-## 当前进度
+---
 
-当前版本包含标题菜单、三页说明书，以及「三关推进」的完整流程（杂兵波次 → 中 Boss → 关底 Boss + 符卡 → 关卡结算）：
+## 🎮 游戏截图
 
-- 开始游戏、查看说明、退出游戏。
-- 三关剧本（`src/stages.py`）描述「过场 → 对话 → 杂兵波次 → 中 Boss → 关底 Boss → 结算」的推进顺序，由 `src/director.py` 的 `StageDirector` 状态机执行；`Game` 只负责响应状态机返回的杂兵、Boss 与结算结果。
-- 三关背景依次为人里近郊、雾之湖与红魔馆，配九场立绘对话，衔接贴近原作节奏。
-- 标题、开战过场、暂停与胜败结算统一采用描金暗红卡片；胜利后可继续阅读原作结局插图上的「后记」与「鸣谢」页。
-- 说明书分「背景说明 / 用语解说 / 操作指南」三页，哥特描金边框与绯红页签，←/→ 翻页；用语解说介绍幻想乡、符卡、中 Boss、关底 Boss、擦弹、灵击、红玉/青玉/绿玉等世界观与玩法术语。
-- 玩家移动、Shift 低速移动、暂停与退出。
-- Z 点按单发、按住连发，火力随道具提升（1.00 单发 / 2.00 双发 / 4.00 四发）；Boss 往返移动。
-- X 释放灵击（Bomb）：消耗一枚，清空自机周围半径内的敌弹并将每 4 颗敌弹转化为一颗火力道具，同时使当前符卡失去「取得」资格。
-- 弹幕式样数据驱动（`src/spells.py`）：`Emitter` 支持扇形 / 环形 / 螺旋 / 散射，`SpellCard` 组合多个发射器并各有独立冷却与限时；关底 Boss 与中 Boss 共用同一套数据，只是符卡数与生命值不同。
-- 符卡「取得」判定贴近原作：限时内未被击中、也没用灵击才算取得并拿到时间加成；被击中、灵击或超时都记为失败，不给分。
-- 三关通关：每通过一关发放一次关卡结算奖励（`STAGE_CLEAR_BONUS`）；三关全部结束后进入胜利结局。
-- 掉落道具带 `PWR / PTS / 1UP` 标记：击破妖精会轮换掉落 POWER 与 POINT，并稀有掉落 LIFE；Boss 换符卡时掉 POWER，进入最后一张符卡额外掉 LIFE；道具进入自机吸附范围后会被磁吸，越过场上 1/4 高度的回收线时全屏道具被自动吸引（原作「回收线」）。
-- 计分与最高分持久化（`hiscore.txt`）：擦弹 +500、符卡取得奖励（基础分 + 剩余秒数 × 时间加成）、中 Boss / 关底 Boss 击破分与关卡结算奖励。
-- 弹幕场三层渲染（关卡背景 + 暗红薄罩 + 径向暗角）；自机按移动方向切换帧组并显示低速判定点。
-- 命中火花、擦弹星环、受击与击破大爆特效；Boss 立绘随符卡切换并受击闪白。
-- 杂兵妖精按编队入场、可悬停开火、被击破后掉落道具，三关共用红魔乡的两组动画。
-- 音效：发射、命中、擦弹、警报、死亡、符卡切换与菜单操作；背景音乐按场景循环切换（标题 / 关卡 / Boss / 胜利后记），无音频设备时自动静音。
-- Boss 血条、符卡条（名称/段数/倒计时）、玩家生命、灵击余量、火力值与道具计数、得分、擦弹/敌弹计数，以及胜利和失败结算插图。
-- 玩家有 3 条命；受击后重生、清空当前敌弹并获得 1.5 秒无敌时间。
-- 失败后可按 R 重开，或按 Enter / Esc 返回标题页。
-- 1280×960 横屏战斗布局：左侧弹幕场、右侧战斗信息栏。
-- 使用已获许可的东方素材：红魔乡背景/自机/Boss 立绘/弹幕/特效/音效，以及 PC-98 时期东方原曲转码的背景音乐。
-- AABB、圆-圆、线段-圆扫掠检测和均匀空间网格工具。
-- 玩家/敌弹和玩家弹/Boss 的相对运动连续碰撞检测。
-- F2 碰撞调试层：空间网格、双层判定圆、敌弹扫掠线段与当帧候选/命中统计。
+<!-- 截图：替换为你自己的游戏画面 -->
+<p align="center">
+  <img src=".github/screenshots/title.png" width="48%" alt="标题画面">
+  <img src=".github/screenshots/gameplay.png" width="48%" alt="战斗画面">
+</p>
+<p align="center">
+  <img src=".github/screenshots/spellcard.png" width="48%" alt="符卡战">
+  <img src=".github/screenshots/gallery.png" width="48%" alt="人物录">
+</p>
 
-项目目标是以三关推进还原原作的一局流程。标题页复用东方红魔乡标题图与 `project-striker` 菜单字图；战斗画面使用用户提供并确认许可的东方红魔乡素材；背景音乐由用户提供的东方音乐包中的 PC-98 时期原曲转码而来。素材来源和许可说明分别见 `assets/title/ATTRIBUTION.md`、`assets/gameplay/ATTRIBUTION.md`、`assets/audio/ATTRIBUTION.md` 与 `assets/bgm/ATTRIBUTION.md`。
+## ✨ 特色
 
-游戏采用 1280×960 的 4:3 横屏布局，参考 `project-striker` 的画布尺寸与左侧弹幕场、右侧状态栏的布局。
+- **三关完整流程**：人里近郊 → 雾之湖 → 红魔馆，每关依次经过过场对话、杂兵波次、中 Boss、关底 Boss 与关卡结算，第三关为终局。
+- **数据驱动的符卡系统**：扇形 / 环形 / 螺旋 / 散射四种发射器自由组合，每张符卡独立冷却与限时，贴近原作的「取得」判定（限时内无受击、无灵击才算取得）。
+- **自研碰撞检测**：不依赖物理引擎，自行实现圆-圆、线段-圆扫掠与均匀空间网格，支持 F2 调试层可视化命中圆、擦弹圆与扫掠线段。
+- **原作风味的 UI**：标题复用红魔乡标题图与 `project-striker` 菜单字图，战斗采用 1280×960 横屏布局（左侧弹幕场、右侧信息栏），哥特描金边框 + 绯红页签。
+- **人物录与日后谈**：通关后解锁 7 名角色立绘与台词浏览，以及三页原作口吻的后记与鸣谢。
+- **跨平台打包**：CI 自动构建 Windows / Linux / macOS 可执行文件，开箱即玩。
 
-## 环境与运行
+## 🕹️ 操作
 
-建议使用 Python 3.12。Windows PowerShell：
+| 按键 | 功能 |
+|---|---|
+| ↑ ↓ / Enter | 标题菜单选择与确认 |
+| ← → | 说明书翻页 / 人物录切换 |
+| 方向键 / WASD | 自机移动 |
+| Shift | 低速移动（显示判定点） |
+| Z | 射击（点按单发 / 按住连发） |
+| X | 灵击（Bomb，消弹并短时无敌） |
+| F1 | 暂停 / 继续 |
+| F2 | 碰撞调试层 |
+| F3 | 无敌模式 |
+| R | 结算后重新开始 |
+| Esc | 返回标题 / 退出 |
+
+## 📥 下载
+
+前往 [Releases](https://github.com/lyra-xuan/Touhou_Project/releases) 页面下载对应平台的可执行文件，解压后双击运行即可，无需安装 Python。
+
+## 🛠️ 从源码运行
+
+需要 Python 3.12。
 
 ```powershell
+# 克隆仓库
+git clone https://github.com/lyra-xuan/Touhou_Project.git
+cd Touhou_Project
+
+# 创建虚拟环境
 py -3.12 -m venv .venv
 .\.venv\Scripts\Activate.ps1
+
+# 安装依赖
 python -m pip install -r requirements.txt
+
+# 运行
 python main.py
 ```
 
-运行自动化测试：
+运行测试：
 
 ```powershell
 python -m unittest discover -s tests -v
 ```
 
-## 操作
+## 📦 打包为可执行文件
 
-| 按键 | 功能 |
-|---|---|
-| ↑ / ↓，Enter | 标题页选择与确认 |
-| ← / → | 说明书中翻页；胜利后翻阅战绩、后记与鸣谢 |
-| 方向键 / WASD | 移动 |
-| Shift | 低速移动，判定点收缩，便于穿过弹缝 |
-| Z | 点按单发，按住连续射击 |
-| X | 灵击（Bomb）：消去身边弹幕，短时无敌 |
-| F1 | 暂停或继续 |
-| F2 | 开关碰撞调试层（默认关闭） |
-| F3 | 开关作弊模式（角色无敌） |
-| R | 胜利或失败后重新开始 |
-| Enter | 推进对话；胜利后翻页，鸣谢页结束阅读；失败后返回标题 |
-| Esc | 结算返回标题；标题页退出；说明书页返回；战斗中退出 |
+```bash
+pip install -r requirements-build.txt
+bash build.sh
+```
 
-## 目录
+产物在 `dist/` 目录下。CI 配置见 [.github/workflows/build.yml](.github/workflows/build.yml)。
+
+## 📁 项目结构
 
 ```text
 main.py                 程序入口
-src/config.py           窗口和玩法参数
-src/director.py         关卡推进状态机（过场/对话/波次/战斗/结算）
-src/stages.py           三关剧本与步骤数据
-src/waves.py            杂兵波次编队与摊平
-src/dialogue.py         立绘对话场景与对话框
-src/spells.py           数据驱动的发射器与符卡定义
-src/entities.py         玩家、Boss、妖精、子弹、道具与特效实体
-src/collision.py        几何碰撞与空间网格
-src/art.py              战斗背景、角色、弹幕、道具与特效图片加载
-src/audio.py            音效与背景音乐加载播放（失败时静默降级）
-src/game.py             输入、游戏循环、碰撞和渲染
-assets/gameplay/        战斗背景、自机、Boss、弹幕与特效素材
-assets/audio/           音效素材
-assets/bgm/             背景音乐（PC-98 东方原曲转码）
+src/
+  config.py             窗口与玩法参数
+  director.py           关卡推进状态机（过场/对话/波次/战斗/结算）
+  stages.py             三关剧本与步骤数据
+  waves.py              杂兵波次编队
+  dialogue.py           立绘对话场景
+  spells.py             发射器与符卡定义（数据驱动）
+  entities.py           玩家、Boss、妖精、子弹、道具、特效
+  collision.py          几何碰撞与空间网格
+  art.py                背景、角色、弹幕、特效图片加载
+  audio.py              音效与背景音乐（失败时静默降级）
+  game.py               输入、游戏循环、碰撞与渲染
+assets/                 战斗素材、音效、背景音乐、标题图（含来源说明）
 tests/                  回归测试
-docs/requirements.md    功能范围和验收标准
-docs/production-guide.md 开发阶段与协作监督方式
-docs/assets.md          素材清单与风格选择
+docs/                   需求、制作指南、素材清单
 ```
 
-## 项目约束
+## 🧰 技术栈
 
-- 使用 pygame-ce 作为底层图形与输入库，不引入游戏引擎。
-- 碰撞检测由项目代码实现；几何算法是课程展示重点。
-- 外部图像、音效和字体须记录来源与许可；未核实许可前不加入游戏或仓库。
+- **Python 3.12** + **pygame-ce**（图形 / 输入 / 音频）
+- 自研碰撞检测：圆-圆、AABB、线段-圆扫掠、均匀空间网格
+- 数据驱动符卡：声明式 `Emitter` + `SpellCard` 组合
+- 关卡状态机：`StageDirector` 驱动剧本步骤序列
+- **PyInstaller** 单文件打包 + **GitHub Actions** 跨平台 CI
 
-详细范围见 [功能需求](docs/requirements.md)、[制作与监督指南](docs/production-guide.md) 和 [素材需求](docs/assets.md)。
+## 🙏 素材与许可
+
+本项目为致敬《东方红魔乡》的非商业同人作品。游戏中使用的东方角色、立绘、背景、弹幕与特效素材来自东方红魔乡原作，背景音乐为 PC-98 时期东方原曲的转码版本。各素材的具体来源与许可说明见：
+
+- `assets/title/ATTRIBUTION.md`
+- `assets/gameplay/ATTRIBUTION.md`
+- `assets/audio/ATTRIBUTION.md`
+- `assets/bgm/ATTRIBUTION.md`
+
+本项目代码部分按个人偏好授权，仅供学习交流，请勿用于商业用途。
+
+---
+
+<p align="center">
+  <sub>Made with ♥ — 东方红雾录 · Scarlet Mist Record</sub>
+</p>
