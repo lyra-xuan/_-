@@ -4,7 +4,9 @@ on:
   workflow_dispatch:
   push:
     branches:
-      - master
+      - main
+    tags:
+      - 'v*'
 
 jobs:
   build:
@@ -81,3 +83,13 @@ jobs:
         with:
           name: th06-scarlet-mist-${{ runner.os }}
           path: dist/${{ steps.vars.outputs.executableName }}
+      - name: Upload to release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/${{ steps.vars.outputs.executableName }}
+          generate_release_notes: true
+          draft: false
+          name: 东方红雾录 ${{ github.ref_name }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
