@@ -11,6 +11,8 @@ on:
 jobs:
   build:
     runs-on: ${{ matrix.os }}
+    permissions:
+      contents: write
     env:
       PYTHONIOENCODING: utf-8
       PYTHONOPTIMIZE: 1
